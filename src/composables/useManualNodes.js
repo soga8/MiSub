@@ -1,13 +1,23 @@
 // FILE: src/composables/useManualNodes.js
 import { ref, computed, watch } from 'vue';
-import { useToastStore } from '../stores/toast'; // 引入 Toast
+import { storeToRefs } from 'pinia';
+import { useDataStore } from '../stores/useDataStore';
+import { useToastStore } from '../stores/toast';
+import { extractNodeName } from '../lib/utils.js';
 
-export function useManualNodes(initialNodesRef, markDirty) {
-  const { showToast } = useToastStore(); // 获取 showToast 函数
-  const manualNodes = ref([]);
+export function useManualNodes(markDirty) {
+  const { showToast } = useToastStore();
+  const dataStore = useDataStore();
+  const { subscriptions: allSubscriptions } = storeToRefs(dataStore);
+
+  // Manual Nodes are items in subscriptions that are NOT http/https
+  // We filter from the shared store state
+  const manualNodes = computed(() => {
+    return (allSubscriptions.value || []).filter(item => !item.url || !/^https?:\/\//.test(item.url));
+  });
+
   const manualNodesCurrentPage = ref(1);
   const manualNodesPerPage = 24;
-
   const searchTerm = ref('');
 
   // 国家/地区代码到旗帜和中文名称的映射
@@ -68,82 +78,57 @@ export function useManualNodes(initialNodesRef, markDirty) {
     'nz': ['🇳🇿', '新西兰', '紐西蘭'],
   };
 
-  function initializeManualNodes(nodesData) {
-    manualNodes.value = (nodesData || []).map(node => ({
-      ...node,
-      id: node.id || crypto.randomUUID(),
-      enabled: node.enabled ?? true,
-    }));
-  }
-
-  // [新增] 根据搜索词过滤节点
   const filteredManualNodes = computed(() => {
     if (!searchTerm.value) {
       return manualNodes.value;
     }
     const searchQuery = searchTerm.value.toLowerCase().trim();
-    
-    const filtered = manualNodes.value.filter(node => {
+    const alternativeTerms = countryCodeMap[searchQuery] || [];
+
+    return manualNodes.value.filter(node => {
       if (!node.name) return false;
-      
       const nodeName = node.name.toLowerCase();
-      
-      // 直接搜索匹配
-      if (nodeName.includes(searchQuery)) {
-        return true;
-      }
-      
-      // 获取可能的替代搜索词（国家代码映射）
-      const alternativeTerms = countryCodeMap[searchQuery] || [];
-      
-      // 检查节点名称是否包含任何替代词
+      if (nodeName.includes(searchQuery)) return true;
       for (const altTerm of alternativeTerms) {
-        if (nodeName.includes(altTerm.toLowerCase())) {
-          return true;
-        }
+        if (nodeName.includes(altTerm.toLowerCase())) return true;
       }
-      
       return false;
     });
-    
-    return filtered;
   });
-  
-  // 保持原始节点数据不变，用于显示总数等
-  const originalManualNodes = computed(() => manualNodes.value);
-  
+
   const manualNodesTotalPages = computed(() => Math.ceil(filteredManualNodes.value.length / manualNodesPerPage));
 
-  // [修改] 分页使用过滤后的节点
   const paginatedManualNodes = computed(() => {
     const start = (manualNodesCurrentPage.value - 1) * manualNodesPerPage;
     const end = start + manualNodesPerPage;
     return filteredManualNodes.value.slice(start, end);
   });
-  
+
   const enabledManualNodes = computed(() => manualNodes.value.filter(n => n.enabled));
 
   function changeManualNodesPage(page) {
     if (page < 1 || page > manualNodesTotalPages.value) return;
     manualNodesCurrentPage.value = page;
-  }  
+  }
 
   function addNode(node) {
-    manualNodes.value.unshift(node);
+    if (!node.name) {
+      node.name = extractNodeName(node.url);
+    }
+    // Add to shared store
+    dataStore.addSubscription(node);
     manualNodesCurrentPage.value = 1;
     markDirty();
   }
 
   function updateNode(updatedNode) {
-    const index = manualNodes.value.findIndex(n => n.id === updatedNode.id);
-    if (index !== -1) {
-      manualNodes.value[index] = updatedNode;
-      markDirty();
-    }
+    // Update in shared store
+    dataStore.updateSubscription(updatedNode.id, updatedNode);
+    markDirty();
   }
 
   function deleteNode(nodeId) {
-    manualNodes.value = manualNodes.value.filter(n => n.id !== nodeId);
+    dataStore.removeSubscription(nodeId);
     if (paginatedManualNodes.value.length === 0 && manualNodesCurrentPage.value > 1) {
       manualNodesCurrentPage.value--;
     }
@@ -151,120 +136,143 @@ export function useManualNodes(initialNodesRef, markDirty) {
   }
 
   function deleteAllNodes() {
-    manualNodes.value = [];
+    // Only remove proper manual nodes (not subscriptions)
+    const idsToRemove = manualNodes.value.map(n => n.id);
+    idsToRemove.forEach(id => dataStore.removeSubscription(id));
+
     manualNodesCurrentPage.value = 1;
     markDirty();
   }
 
   function addNodesFromBulk(nodes) {
-    manualNodes.value.unshift(...nodes);
+    // Reverse insert
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      dataStore.addSubscription(nodes[i]);
+    }
     markDirty();
   }
+
   const getUniqueKey = (url) => {
     try {
       if (url.startsWith('vmess://')) {
         const base64Part = url.substring('vmess://'.length);
-        
-        // 关键步骤：解码后，移除所有空白字符，解决格式不一致问题
         const decodedString = atob(base64Part);
-        const cleanedString = decodedString.replace(/\s/g, ''); // 移除所有空格、换行等
-        
+        const cleanedString = decodedString.replace(/\s/g, '');
         const nodeConfig = JSON.parse(cleanedString);
-        
         delete nodeConfig.ps;
         delete nodeConfig.remark;
-        
-        // 重新序列化对象，并以此作为唯一键
-        // 通过排序键来确保即使字段顺序不同也能得到相同的结果
         return 'vmess://' + JSON.stringify(Object.keys(nodeConfig).sort().reduce(
-          (obj, key) => { 
-            obj[key] = nodeConfig[key]; 
+          (obj, key) => {
+            obj[key] = nodeConfig[key];
             return obj;
-          }, 
+          },
           {}
         ));
       }
-      // 对于其他协议，简单地移除 # 后面的部分
       const hashIndex = url.indexOf('#');
       return hashIndex !== -1 ? url.substring(0, hashIndex) : url;
     } catch (e) {
-      console.error('生成节点唯一键失败，将使用原始URL:', url, e);
-      // 如果解析失败，回退到使用原始URL，避免程序崩溃
       return url;
     }
   };
 
   function deduplicateNodes() {
     const originalCount = manualNodes.value.length;
+    // We only scan current manual nodes
+    const nodes = manualNodes.value;
     const seenKeys = new Set();
-    const uniqueNodes = [];
+    const idsToKeep = new Set();
 
-    for (const node of manualNodes.value) {
-      // 使用新的、更智能的函数来生成唯一键
+    // Identify duplicates locally
+    for (const node of nodes) {
       const uniqueKey = getUniqueKey(node.url);
-      
       if (!seenKeys.has(uniqueKey)) {
         seenKeys.add(uniqueKey);
-        uniqueNodes.push(node);
+        idsToKeep.add(node.id);
       }
     }
-    
-    manualNodes.value = uniqueNodes;
-    const removedCount = originalCount - uniqueNodes.length;
 
-    // 重置分页到第一页，确保去重后能正确显示
-    manualNodesCurrentPage.value = 1;
+    // Calculate which IDs to remove (from the manual nodes set)
+    const idsToRemove = nodes
+      .filter(n => !idsToKeep.has(n.id))
+      .map(n => n.id);
 
-    if (removedCount > 0) {
-      showToast(`成功移除 ${removedCount} 个重复节点，请记得保存。`, 'success');
+    if (idsToRemove.length > 0) {
+      idsToRemove.forEach(id => dataStore.removeSubscription(id));
+      showToast(`成功移除 ${idsToRemove.length} 个重复节点，请记得保存。`, 'success');
       markDirty();
     } else {
       showToast('没有发现重复的节点。', 'info');
     }
+
+    manualNodesCurrentPage.value = 1;
   }
 
   function autoSortNodes() {
-    const regionKeywords = { HK: [/香港/,/HK/,/Hong Kong/i], TW: [/台湾/,/TW/,/Taiwan/i], SG: [/新加坡/,/SG/,/狮城/,/Singapore/i], JP: [/日本/,/JP/,/Japan/i], US: [/美国/,/US/,/United States/i], KR: [/韩国/,/KR/,/Korea/i], GB: [/英国/,/GB/,/UK/,/United Kingdom/i], DE: [/德国/,/DE/,/Germany/i], FR: [/法国/,/FR/,/France/i], CA: [/加拿大/,/CA/,/Canada/i], AU: [/澳大利亚/,/AU/,/Australia/i], };
+    // Sort logic requires replacing the list.
+    // Since manual nodes are part of a larger list (subscriptions), we need to extract them, sort them, 
+    // and then potentially re-insert them or just update their order relative to themselves?
+    // The store's 'subscriptions' array is mixed.
+    // If we want to sort ONLY manual nodes but keep subscriptions in place... 
+    // It's complex because we don't track indices separately easily.
+    // Approach: Extract all Manual Nodes, Sort them, Extract all Subscriptions (keep order),
+    // Then Combine: [Subscriptions..., SortedManualNodes...]
+    // This effectively moves all manual nodes to the bottom. This is acceptable/expected behavior.
+
+    const subs = allSubscriptions.value.filter(s => s.url && /^https?:\/\//.test(s.url));
+    const nodes = [...manualNodes.value]; // Copy manual nodes
+
+    const regionKeywords = { HK: [/香港/, /HK/, /Hong Kong/i], TW: [/台湾/, /TW/, /Taiwan/i], SG: [/新加坡/, /SG/, /狮城/, /Singapore/i], JP: [/日本/, /JP/, /Japan/i], US: [/美国/, /US/, /United States/i], KR: [/韩国/, /KR/, /Korea/i], GB: [/英国/, /GB/, /UK/, /United Kingdom/i], DE: [/德国/, /DE/, /Germany/i], FR: [/法国/, /FR/, /France/i], CA: [/加拿大/, /CA/, /Canada/i], AU: [/澳大利亚/, /AU/, /Australia/i], };
     const regionOrder = ['HK', 'TW', 'SG', 'JP', 'US', 'KR', 'GB', 'DE', 'FR', 'CA', 'AU'];
     const getRegionCode = (name) => { for (const code in regionKeywords) { for (const keyword of regionKeywords[code]) { if (keyword.test(name)) return code; } } return 'ZZ'; };
-    
-    manualNodes.value.sort((a, b) => {
-        const regionA = getRegionCode(a.name);
-        const regionB = getRegionCode(b.name);
-        const indexA = regionOrder.indexOf(regionA);
-        const indexB = regionOrder.indexOf(regionB);
-        const effectiveIndexA = indexA === -1 ? Infinity : indexA;
-        const effectiveIndexB = indexB === -1 ? Infinity : indexB;
-        if (effectiveIndexA !== effectiveIndexB) return effectiveIndexA - effectiveIndexB;
-        return a.name.localeCompare(b.name, 'zh-CN');
+
+    nodes.sort((a, b) => {
+      const regionA = getRegionCode(a.name);
+      const regionB = getRegionCode(b.name);
+      // ... same sort logic ...
+      const indexA = regionOrder.indexOf(regionA);
+      const indexB = regionOrder.indexOf(regionB);
+      const effectiveIndexA = indexA === -1 ? Infinity : indexA;
+      const effectiveIndexB = indexB === -1 ? Infinity : indexB;
+      if (effectiveIndexA !== effectiveIndexB) return effectiveIndexA - effectiveIndexB;
+      return a.name.localeCompare(b.name, 'zh-CN');
     });
 
-    // 重置分页到第一页，确保排序后能正确显示
-    manualNodesCurrentPage.value = 1;
+    // Update store with new order: Subscriptions first, then Manual Nodes
+    dataStore.overwriteSubscriptions([...subs, ...nodes]);
 
-    // [修正] 只標記為 dirty，不呼叫 handleSave
+    manualNodesCurrentPage.value = 1;
     markDirty();
   }
 
-  // [新增] 监听搜索词变化，重置分页
   watch(searchTerm, (newValue, oldValue) => {
-    // 只在搜索词实际改变时重置分页
     if (newValue !== oldValue) {
       manualNodesCurrentPage.value = 1;
     }
   });
 
-  watch(initialNodesRef, (newInitialNodes) => {
-    initializeManualNodes(newInitialNodes);
-  }, { immediate: true, deep: true });
+  function reorderManualNodes(newOrder) {
+    // 1. Get all Subscriptions (to preserve them)
+    const currentSubscriptions = (allSubscriptions.value || []).filter(item => item.url && /^https?:\/\//.test(item.url));
+
+    // 2. Combine Existing Subscriptions + New Ordered Manual Nodes
+    // Logic: Keep Subscriptions at top, Manual Nodes at bottom
+    const mergedList = [...currentSubscriptions, ...newOrder];
+
+    // 3. Update Store
+    dataStore.overwriteSubscriptions(mergedList);
+
+    // 4. Mark Dirty
+    markDirty();
+  }
 
   return {
-    manualNodes: originalManualNodes, // 返回原始数据，不经过搜索过滤
+    manualNodes, // Returns computed filtered list
     manualNodesCurrentPage,
     manualNodesTotalPages,
-    paginatedManualNodes, // 这个已经经过搜索过滤和分页
+    paginatedManualNodes,
     enabledManualNodesCount: computed(() => enabledManualNodes.value.length),
-    searchTerm, // [新增] 导出搜索词
+    searchTerm,
     changeManualNodesPage,
     addNode,
     updateNode,
@@ -272,6 +280,7 @@ export function useManualNodes(initialNodesRef, markDirty) {
     deleteAllNodes,
     addNodesFromBulk,
     autoSortNodes,
-    deduplicateNodes, // 导出新函数
+    deduplicateNodes,
+    reorderManualNodes, // Added
   };
 }

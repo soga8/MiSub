@@ -1,12 +1,13 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, defineAsyncComponent } from 'vue';
-import { saveMisubs } from '../../../lib/api.js';
 import { extractNodeName } from '../../../lib/utils.js';
 import { useToastStore } from '../../../stores/toast.js';
 import { useUIStore } from '../../../stores/ui.js';
+import { useDataStore } from '../../../stores/useDataStore.js'; // Added
 import { useSubscriptions } from '../../../composables/useSubscriptions.js';
 import { useManualNodes } from '../../../composables/useManualNodes.js';
 import { useProfiles } from '../../../composables/useProfiles.js';
+import { storeToRefs } from 'pinia'; // Added
 
 // --- Component Imports ---
 import RightPanel from '../../profiles/RightPanel.vue';
@@ -27,41 +28,49 @@ const NodePreviewModal = defineAsyncComponent(() => import('../../modals/NodePre
 const props = defineProps({ data: Object });
 const { showToast } = useToastStore();
 const uiStore = useUIStore();
-const isLoading = ref(true);
-const dirty = ref(false);
+const dataStore = useDataStore();
+const { settings, isDirty, isLoading } = storeToRefs(dataStore); // Use store refs
+const config = settings; // Compatibility alias for template
+const { clearDirty } = dataStore; // Don't destructure markDirty directly
+console.log('Dashboard: setup running');
+
 const saveState = ref('idle');
 
+// Wrapper for markDirty to also reset saveState
+const markDirty = () => {
+    dataStore.markDirty();
+    saveState.value = 'idle';
+};
+
 // --- 將狀態和邏輯委託給 Composables ---
-const markDirty = () => { dirty.value = true; saveState.value = 'idle'; };
-const initialSubs = ref([]);
-const initialNodes = ref([]);
+// Composables now use global store, so we don't pass refs
+// --- UI State ---
+const isSortingSubs = ref(false);
+const isSortingNodes = ref(false);
+const manualNodeViewMode = ref('card');
 
 const {
   subscriptions, subsCurrentPage, subsTotalPages, paginatedSubscriptions, totalRemainingTraffic,
   changeSubsPage, addSubscription, updateSubscription, deleteSubscription, deleteAllSubscriptions,
-  addSubscriptionsFromBulk, handleUpdateNodeCount,
-} = useSubscriptions(initialSubs, markDirty);
+  addSubscriptionsFromBulk, handleUpdateNodeCount, batchUpdateAllSubscriptions, startAutoUpdate, stopAutoUpdate,
+  reorderSubscriptions, 
+} = useSubscriptions(markDirty);
 
 const {
   manualNodes, manualNodesCurrentPage, manualNodesTotalPages, paginatedManualNodes, searchTerm,
   changeManualNodesPage, addNode, updateNode, deleteNode, deleteAllNodes,
   addNodesFromBulk, autoSortNodes, deduplicateNodes,
-} = useManualNodes(initialNodes, markDirty);
+  reorderManualNodes, 
+} = useManualNodes(markDirty);
 
-// --- 訂閱組 (Profile) 相關狀態 ---
-const config = ref({});
-const initialProfiles = ref([]);
 const {
   profiles, editingProfile, isNewProfile, showProfileModal, showDeleteProfilesModal,
   initializeProfiles, handleProfileToggle, handleAddProfile, handleEditProfile,
   handleSaveProfile, handleDeleteProfile, handleDeleteAllProfiles, copyProfileLink,
   cleanupSubscriptions, cleanupNodes, cleanupAllSubscriptions, cleanupAllNodes,
-} = useProfiles(initialProfiles, markDirty, config);
-
+} = useProfiles(markDirty);
 // --- UI State ---
-const isSortingSubs = ref(false);
-const isSortingNodes = ref(false);
-const manualNodeViewMode = ref('card');
+
 const editingSubscription = ref(null);
 const isNewSubscription = ref(false);
 const showSubModal = ref(false);
@@ -80,23 +89,26 @@ const previewProfileId = ref(null);
 const previewSubscriptionName = ref('');
 const previewSubscriptionUrl = ref('');
 const previewProfileName = ref('');
+const previewProfileName_ = ref(''); // fix potential unused var or re-usage
+
 // --- 初始化與生命週期 ---
-const initializeState = () => {
-  isLoading.value = true;
-  if (props.data) {
-    const subsData = props.data.misubs || [];
-    initialSubs.value = subsData.filter(item => item.url && /^https?:\/\//.test(item.url));
-    initialNodes.value = subsData.filter(item => !item.url || !/^https?:\/\//.test(item.url));
-    initialProfiles.value = props.data.profiles || [];
-    config.value = props.data.config || {};
-    initializeProfiles();
-  }
-  isLoading.value = false;
-  dirty.value = false;
+const initializeState = async () => {
+    console.log('Dashboard: initializeState started');
+    try {
+        // fetchData 内部会检查数据是否已加载，避免重复请求
+        await dataStore.fetchData();
+        console.log('Dashboard: fetchData completed', {
+            subs: subscriptions.value?.length,
+            nodes: manualNodes.value?.length
+        });
+        clearDirty();
+    } catch (e) {
+        console.error('Dashboard: initializeState error', e);
+    }
 };
 
 const handleBeforeUnload = (event) => {
-  if (dirty.value) {
+  if (isDirty.value) {
     event.preventDefault();
     event.returnValue = '您有未保存的更改，確定要离开嗎？';
   }
@@ -109,10 +121,14 @@ onMounted(() => {
   if (savedViewMode) {
     manualNodeViewMode.value = savedViewMode;
   }
+  // 启动订阅自动更新定时器（每30分钟）
+  startAutoUpdate();
 });
 
 onUnmounted(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload);
+  // 停止订阅自动更新定时器
+  stopAutoUpdate();
 });
 
 const setViewMode = (mode) => {
@@ -121,68 +137,30 @@ const setViewMode = (mode) => {
 };
 
 // --- 其他 JS 逻辑 (省略) ---
-const handleDiscard = () => {
-  initializeState();
+const handleDiscard = async () => {
+  // 强制刷新数据，忽略缓存
+  await dataStore.fetchData(true);
   showToast('已放弃所有未保存的更改');
 };
+
 const handleSave = async () => {
   saveState.value = 'saving';
-  const combinedMisubs = [
-      ...subscriptions.value.map(sub => ({ ...sub, isUpdating: undefined })),
-      ...manualNodes.value.map(node => ({ ...node, isUpdating: undefined }))
-  ];
-
+  
   try {
-    // 数据验证
-    if (!Array.isArray(combinedMisubs) || !Array.isArray(profiles.value)) {
-      throw new Error('数据格式错误，请刷新页面后重试');
-    }
+     await dataStore.saveData();
+     
+     saveState.value = 'success';
+     
+     if (isSortingNodes.value) isSortingNodes.value = false;
+     
+     setTimeout(() => { saveState.value = 'idle'; }, 1500);
 
-    const result = await saveMisubs(combinedMisubs, profiles.value);
-
-    if (result.success) {
-        saveState.value = 'success';
-        showToast('保存成功！', 'success');
-
-        // 如果服务器返回了更新后的数据，使用这些数据更新本地状态
-        if (result.data) {
-          const subsData = result.data.misubs || [];
-          initialSubs.value = subsData.filter(item => item.url && /^https?:\/\//.test(item.url));
-          initialNodes.value = subsData.filter(item => !item.url || !/^https?:\/\//.test(item.url));
-          initialProfiles.value = result.data.profiles || [];
-
-          // 重置分页到第一页
-          manualNodesCurrentPage.value = 1;
-        }
-
-        // 如果当前处于排序模式，自动退出排序模式
-        if (isSortingNodes.value) {
-          isSortingNodes.value = false;
-        }
-
-        setTimeout(() => { dirty.value = false; saveState.value = 'idle'; }, 1500);
-    } else {
-        // 显示服务器返回的具体错误信息
-        const errorMessage = result.message || result.error || '保存失败，请稍后重试';
-        throw new Error(errorMessage);
-    }
   } catch (error) {
-    console.error('保存数据时发生错误:', error);
-
-    // 根据错误类型提供不同的用户提示
-    let userMessage = error.message;
-    if (error.message.includes('网络')) {
-      userMessage = '网络连接异常，请检查网络后重试';
-    } else if (error.message.includes('格式')) {
-      userMessage = '数据格式异常，请刷新页面后重试';
-    } else if (error.message.includes('存储')) {
-      userMessage = '存储服务暂时不可用，请稍后重试';
-    }
-
-    showToast(userMessage, 'error');
-    saveState.value = 'idle';
+     saveState.value = 'idle';
   }
 };
+
+
 const handleDeleteSubscriptionWithCleanup = (subId) => {
   deleteSubscription(subId);
   cleanupSubscriptions(subId);
@@ -236,6 +214,13 @@ const handlePreviewProfile = (profileId) => {
   }
 };
 
+const handleProfileReorder = (fromIndex, toIndex) => {
+  // 使用 splice 方法保持响应性,而不是直接赋值
+  const [item] = profiles.value.splice(fromIndex, 1);
+  profiles.value.splice(toIndex, 0, item);
+  markDirty();
+};
+
 // --- Backup & Restore ---
 const exportBackup = () => {
   try {
@@ -283,9 +268,10 @@ const importBackup = () => {
         }
 
         if (confirm('这将覆盖您当前的所有数据（需要手动保存后生效），确定要从备份中恢复吗？')) {
-          subscriptions.value = data.subscriptions;
-          manualNodes.value = data.manualNodes;
-          profiles.value = data.profiles;
+          // Merge subscriptions and manual nodes as they are stored together in the backend/store
+          const mergedSubscriptions = [...data.subscriptions, ...data.manualNodes];
+          dataStore.overwriteSubscriptions(mergedSubscriptions);
+          dataStore.overwriteProfiles(data.profiles);
           markDirty();
           showToast('数据已从备份恢复，请点击“保存更改”以持久化', 'success');
           uiStore.hide(); // Close settings modal after import
@@ -317,7 +303,7 @@ const handleBulkImport = (importText) => {
 };
 const handleAddSubscription = () => {
   isNewSubscription.value = true;
-  editingSubscription.value = { name: '', url: '', enabled: true, exclude: '' }; // 新增 exclude
+  editingSubscription.value = { name: '', url: '', enabled: true, exclude: '', customUserAgent: '', notes: '' }; // 新增 notes
   showSubModal.value = true;
 };
 const handleEditSubscription = (subId) => {
@@ -383,6 +369,7 @@ const formattedTotalRemainingTraffic = computed(() => formatBytes(totalRemaining
 </script>
 
 <template>
+
   <div v-if="isLoading" class="w-full max-w-(--breakpoint-xl) mx-auto p-4 sm:p-6 lg:p-8">
     <SkeletonLoader type="dashboard" />
   </div>
@@ -405,11 +392,16 @@ const formattedTotalRemainingTraffic = computed(() => formatBytes(totalRemaining
 
     <!-- Dirty State Banner -->
     <Transition name="slide-fade">
-      <div v-if="dirty" class="p-3 mb-6 rounded-lg bg-indigo-600/10 dark:bg-indigo-500/20 ring-1 ring-inset ring-indigo-600/20 flex items-center justify-between">
-        <p class="text-sm font-medium text-indigo-800 dark:text-indigo-200">您有未保存的更改</p>
+      <div v-if="isDirty || saveState === 'success'" 
+           class="p-3 mb-6 rounded-lg ring-1 ring-inset flex items-center justify-between transition-colors duration-300"
+           :class="saveState === 'success' ? 'bg-teal-500/10 ring-teal-500/20' : 'bg-indigo-600/10 dark:bg-indigo-500/20 ring-indigo-600/20'">
+        <p class="text-sm font-medium transition-colors duration-300" 
+           :class="saveState === 'success' ? 'text-teal-800 dark:text-teal-200' : 'text-indigo-800 dark:text-indigo-200'">
+          {{ saveState === 'success' ? '保存成功' : '您有未保存的更改' }}
+        </p>
         <div class="flex items-center gap-3">
-          <button @click="handleDiscard" class="text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors">放弃更改</button>
-          <button @click="handleSave" :disabled="saveState !== 'idle'" class="px-5 py-2 text-sm text-white font-semibold rounded-lg shadow-xs flex items-center justify-center transition-all duration-300 w-28" :class="{'bg-indigo-600 hover:bg-indigo-700': saveState === 'idle', 'bg-gray-500 cursor-not-allowed': saveState === 'saving', 'bg-teal-500 cursor-not-allowed': saveState === 'success' }">
+          <button v-if="saveState !== 'success'" @click="handleDiscard" class="text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors">放弃更改</button>
+          <button @click.prevent="handleSave" :disabled="saveState !== 'idle'" class="px-5 py-2 text-sm text-white font-semibold rounded-lg shadow-xs flex items-center justify-center transition-all duration-300 w-28" :class="{'bg-indigo-600 hover:bg-indigo-700': saveState === 'idle', 'bg-gray-500 cursor-not-allowed': saveState === 'saving', 'bg-teal-500 cursor-not-allowed': saveState === 'success' }">
             <div v-if="saveState === 'saving'" class="flex items-center">
               <StatusIndicator status="loading" size="sm" class="mr-2" />
               <span>保存中...</span>
@@ -438,11 +430,13 @@ const formattedTotalRemainingTraffic = computed(() => formatBytes(totalRemaining
           @delete="handleDeleteSubscriptionWithCleanup"
           @change-page="changeSubsPage"
           @update-node-count="handleUpdateNodeCount"
+          @refresh-all="batchUpdateAllSubscriptions"
           @edit="handleEditSubscription"
           @toggle-sort="isSortingSubs = !isSortingSubs"
           @mark-dirty="markDirty"
           @delete-all="showDeleteSubsModal = true"
           @preview="handlePreviewSubscription"
+          @reorder="reorderSubscriptions"
         />
 
         <!-- Manual Node Panel -->
@@ -466,6 +460,7 @@ const formattedTotalRemainingTraffic = computed(() => formatBytes(totalRemaining
           @deduplicate="handleDeduplicateNodes"
           @import="showSubscriptionImportModal = true"
           @delete-all="showDeleteNodesModal = true"
+          @reorder="reorderManualNodes"
         />
       </div>
       
@@ -481,6 +476,7 @@ const formattedTotalRemainingTraffic = computed(() => formatBytes(totalRemaining
           @toggle="handleProfileToggle"
           @copyLink="copyProfileLink"
           @preview="handlePreviewProfile"
+          @reorder="handleProfileReorder"
         />
       </div>
     </div>
@@ -519,6 +515,54 @@ const formattedTotalRemainingTraffic = computed(() => formatBytes(totalRemaining
             class="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md shadow-xs focus:outline-hidden focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm font-mono dark:text-white">
           </textarea>
           <p class="text-xs text-gray-400 mt-1">每行一条规则。使用 `keep:` 切换为白名单模式。</p>
+        </div>
+        <!-- [新增] User-Agent 设置 -->
+        <div>
+          <label for="sub-edit-ua" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+            自定义 User-Agent
+            <span class="text-xs text-gray-500 ml-2">(可选,留空使用默认)</span>
+          </label>
+          <select 
+            id="sub-edit-ua"
+            v-model="editingSubscription.customUserAgent"
+            class="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md shadow-xs focus:outline-hidden focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm dark:text-white"
+          >
+            <option value="">使用默认 UA</option>
+            <optgroup label="Clash 系列">
+              <option value="clash-verge/v2.4.3">Clash Verge (v2.4.3)</option>
+              <option value="clash.meta">Clash Meta</option>
+              <option value="ClashForAndroid/2.5.12">Clash for Android</option>
+            </optgroup>
+            <optgroup label="V2Ray 系列">
+              <option value="v2rayN/7.23">v2rayN (v7.23)</option>
+              <option value="v2rayNG/1.8.5">v2rayNG (v1.8.5)</option>
+            </optgroup>
+            <optgroup label="其他客户端">
+              <option value="Shadowrocket/1.9.0">Shadowrocket</option>
+              <option value="Surge/5.0.0">Surge</option>
+              <option value="Quantumult%20X/1.4.0">Quantumult X</option>
+            </optgroup>
+            <optgroup label="浏览器">
+              <option value="Mozilla/5.0">Mozilla (通用)</option>
+            </optgroup>
+          </select>
+          <p v-if="editingSubscription.customUserAgent" class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            当前 UA: {{ editingSubscription.customUserAgent }}
+          </p>
+        </div>
+        <!-- [新增] 备注 -->
+        <div>
+          <label for="sub-edit-notes" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+            备注
+            <span class="text-xs text-gray-500 ml-2">(可选,如官网、价格等)</span>
+          </label>
+          <textarea 
+            id="sub-edit-notes" 
+            v-model="editingSubscription.notes"
+            placeholder="例如: 官网: example.com | 价格: ￥20/月 | 到期: 2024-12-31"
+            rows="2" 
+            class="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md shadow-xs focus:outline-hidden focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm dark:text-white"
+          ></textarea>
         </div>
       </div>
     </template>

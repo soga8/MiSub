@@ -4,7 +4,7 @@
  */
 
 import { StorageFactory } from '../../storage-adapter.js';
-import { createJsonResponse } from '../utils.js';
+import { createJsonResponse, createErrorResponse } from '../utils.js';
 import { parseNodeList } from '../utils/node-parser.js';
 
 // 创建用于全局匹配的协议正则表达式
@@ -18,16 +18,19 @@ const NODE_PROTOCOL_GLOBAL_REGEX = new RegExp('^(ss|ssr|vmess|vless|trojan|hyste
  */
 export async function handleNodeCountRequest(request, env) {
     if (request.method !== 'POST') {
-        return createJsonResponse('Method Not Allowed', 405);
+        return createErrorResponse('Method Not Allowed', 'NodeHandler', 405);
     }
 
     try {
         const { url: subUrl } = await request.json();
         if (!subUrl || typeof subUrl !== 'string' || !/^https?:\/\//.test(subUrl)) {
-            return createJsonResponse({ error: 'Invalid or missing url' }, 400);
+            return createErrorResponse('Invalid or missing url', 'NodeHandler', 400);
         }
 
         const result = { count: 0, userInfo: null };
+        let trafficRequestSucceeded = false;
+        let nodeCountRequestSucceeded = false;
+        let fetchError = null;
 
         try {
             // 使用统一的User-Agent策略
@@ -59,7 +62,14 @@ export async function handleNodeCountRequest(request, env) {
                         if (key && value) info[key] = /^\d+$/.test(value) ? Number(value) : value;
                     });
                     result.userInfo = info;
+                    trafficRequestSucceeded = true;
                 }
+            } else if (responses[0].status === 'rejected') {
+                fetchError = responses[0].reason;
+                console.error('Traffic request failed:', responses[0].reason);
+            } else if (responses[0].status === 'fulfilled' && !responses[0].value.ok) {
+                fetchError = new Error(`HTTP ${responses[0].value.status}: ${responses[0].value.statusText}`);
+                console.error('Traffic request returned error:', responses[0].value.status);
             }
 
             // 2. 处理节点数请求的结果
@@ -76,6 +86,7 @@ export async function handleNodeCountRequest(request, env) {
                     const parsedNodes = parseNodeList(text);
                     console.log(`[DEBUG] Node count API: Parsed ${parsedNodes.length} nodes using parseNodeList`);
                     result.count = parsedNodes.length;
+                    nodeCountRequestSucceeded = true;
                 } catch (e) {
                     // 解析失败，尝试简单统计
                     console.error('Node count parse error:', e);
@@ -96,6 +107,7 @@ export async function handleNodeCountRequest(request, env) {
                             console.log(`[DEBUG] Node count API: Regex matches in decoded text: ${lineMatches ? lineMatches.length : 0}`);
                             if (lineMatches) {
                                 result.count = lineMatches.length;
+                                nodeCountRequestSucceeded = true;
                             }
                         } else {
                             console.log(`[DEBUG] Node count API: Using raw text regex match`);
@@ -103,6 +115,7 @@ export async function handleNodeCountRequest(request, env) {
                             console.log(`[DEBUG] Node count API: Regex matches in raw text: ${lineMatches ? lineMatches.length : 0}`);
                             if (lineMatches) {
                                 result.count = lineMatches.length;
+                                nodeCountRequestSucceeded = true;
                             }
                         }
                     } catch {
@@ -112,9 +125,41 @@ export async function handleNodeCountRequest(request, env) {
                         console.log(`[DEBUG] Node count API: Final regex matches: ${lineMatches ? lineMatches.length : 0}`);
                         if (lineMatches) {
                             result.count = lineMatches.length;
+                            nodeCountRequestSucceeded = true;
                         }
                     }
                 }
+            } else if (responses[1].status === 'rejected') {
+                if (!fetchError) fetchError = responses[1].reason;
+                console.error('Node count request failed:', responses[1].reason);
+            } else if (responses[1].status === 'fulfilled' && !responses[1].value.ok) {
+                if (!fetchError) fetchError = new Error(`HTTP ${responses[1].value.status}: ${responses[1].value.statusText}`);
+                console.error('Node count request returned error:', responses[1].value.status);
+            }
+
+            // 检查是否两个请求都失败了
+            if (!trafficRequestSucceeded && !nodeCountRequestSucceeded) {
+                // 两个请求都失败,返回错误信息
+                let errorType = 'fetch_failed';
+                let errorMessage = '订阅获取失败';
+
+                if (fetchError) {
+                    if (fetchError.name === 'AbortError' || fetchError.message?.includes('timeout')) {
+                        errorType = 'timeout';
+                        errorMessage = '订阅请求超时';
+                    } else if (fetchError.message?.includes('network') || fetchError.message?.includes('fetch')) {
+                        errorType = 'network';
+                        errorMessage = '网络连接失败';
+                    } else if (fetchError.message?.includes('HTTP')) {
+                        errorType = 'server';
+                        errorMessage = fetchError.message;
+                    }
+                }
+
+                console.error(`[Node Count] Both requests failed for ${subUrl}:`, errorMessage);
+                result.error = errorMessage;
+                result.errorType = errorType;
+                return createJsonResponse(result);
             }
 
             // 只有在至少获取到一个有效信息时，才更新数据库
@@ -135,13 +180,14 @@ export async function handleNodeCountRequest(request, env) {
         } catch (e) {
             // 节点计数处理错误
             console.error('Node count processing error:', e);
+            result.error = `处理失败: ${e.message}`;
+            result.errorType = 'processing_error';
+            return createJsonResponse(result);
         }
 
         return createJsonResponse(result);
     } catch (e) {
-        return createJsonResponse({
-            error: `获取节点数量失败: ${e.message}`
-        }, 500);
+        return createErrorResponse(`获取节点数量失败: ${e.message}`, 'NodeHandler', 500);
     }
 }
 
@@ -263,9 +309,7 @@ export async function handleBatchUpdateNodesRequest(request, env) {
             }
         });
     } catch (e) {
-        return createJsonResponse({
-            error: `批量更新失败: ${e.message}`
-        }, 500);
+        return createErrorResponse(`批量更新失败: ${e.message}`, 'NodeHandler', 500);
     }
 }
 
@@ -292,10 +336,7 @@ export async function handleCleanNodesRequest(request, env) {
             const previewResult = await handleSubscriptionNodesRequest(request, env);
 
             if (!previewResult.success) {
-                return createJsonResponse({
-                    error: '获取订阅组节点失败',
-                    details: previewResult.error
-                }, 400);
+                return createErrorResponse(`获取订阅组节点失败: ${previewResult.error}`, 'NodeHandler', 400);
             }
 
             // 去重处理
@@ -319,14 +360,10 @@ export async function handleCleanNodesRequest(request, env) {
             });
         } else {
             // 清理所有订阅的节点（全局清理）
-            return createJsonResponse({
-                error: '全局节点清理功能暂未实现，请指定profileId'
-            }, 501);
+            return createErrorResponse('全局节点清理功能暂未实现，请指定profileId', 'NodeHandler', 501);
         }
     } catch (e) {
-        return createJsonResponse({
-            error: `节点清理失败: ${e.message}`
-        }, 500);
+        return createErrorResponse(`节点清理失败: ${e.message}`, 'NodeHandler', 500);
     }
 }
 

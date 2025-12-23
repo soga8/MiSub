@@ -91,8 +91,12 @@ const expiryInfo = computed(() => {
 
 <template>
   <div 
-    class="group bg-white/90 dark:bg-gray-900/80 backdrop-blur-md rounded-2xl card-shadow hover:card-shadow-hover p-4 smooth-all hover:-translate-y-1 flex flex-col h-full min-h-[175px]"
-    :class="{ 'opacity-50': !misub.enabled }"
+    class="group bg-white/90 dark:bg-gray-900/80 backdrop-blur-md rounded-2xl elevation-2 hover:elevation-4 p-4 spring-hover hover-glow flex flex-col h-full min-h-[175px] transition-all duration-300"
+    :class="{ 
+      'status-disabled': !misub.enabled,
+      'status-enabled': misub.enabled && !misub.isUpdating,
+      'status-updating': misub.isUpdating
+    }"
   >
     <div class="flex items-start justify-between gap-3">
       <div class="w-full truncate">
@@ -145,6 +149,18 @@ const expiryInfo = computed(() => {
       <div class="flex items-center space-x-3">
         <span class="text-sm font-semibold" :class="misub.isUpdating ? 'text-yellow-500 animate-pulse' : 'text-gray-700 dark:text-gray-300'">{{ misub.isUpdating ? '更新中...' : `${misub.nodeCount} Nodes` }}</span>
         <button @click="emit('update')" :disabled="misub.isUpdating" class="text-gray-400 hover:text-indigo-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" title="更新节点数和流量"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" :class="{'animate-spin': misub.isUpdating}" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" /></svg></button>
+      </div>
+    </div>
+
+    <!-- [新增] 备注显示 -->
+    <div v-if="misub.notes && misub.notes.trim()" 
+         class="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+      <div class="flex items-start gap-2 text-xs text-gray-600 dark:text-gray-400">
+        <svg class="w-3.5 h-3.5 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
+        </svg>
+        <span class="break-words flex-1">{{ misub.notes }}</span>
       </div>
     </div>
   </div>

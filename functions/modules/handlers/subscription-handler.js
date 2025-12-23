@@ -4,7 +4,7 @@
  */
 
 import { StorageFactory } from '../../storage-adapter.js';
-import { createJsonResponse } from '../utils.js';
+import { createJsonResponse, createErrorResponse } from '../utils.js';
 import { extractNodeRegion, parseNodeInfo } from '../utils/geo-utils.js';
 import { parseNodeList, calculateProtocolStats, calculateRegionStats } from '../utils/node-parser.js';
 
@@ -45,7 +45,7 @@ async function handleProfileMode(request, env, profileId, userAgent) {
         const isManualNode = !isSubscription;
 
         const belongsToProfile = (isSubscription && profileSubIds.has(item.id)) ||
-                                 (isManualNode && profileNodeIds.has(item.id));
+            (isManualNode && profileNodeIds.has(item.id));
 
         return item.enabled && belongsToProfile;
     });
@@ -72,7 +72,7 @@ async function handleProfileMode(request, env, profileId, userAgent) {
 
     // 并行获取HTTP订阅节点
     const subscriptionResults = await Promise.all(
-        targetSubscriptions.map(sub => fetchSubscriptionNodes(sub.url, sub.name, userAgent))
+        targetSubscriptions.map(sub => fetchSubscriptionNodes(sub.url, sub.name, userAgent, sub.customUserAgent))
     );
 
     // 合并所有结果
@@ -150,7 +150,7 @@ async function handleSingleSubscriptionMode(request, env, subscriptionId, userAg
     }
 
     // HTTP订阅：获取节点
-    const result = await fetchSubscriptionNodes(subscription.url, subscription.name, userAgent);
+    const result = await fetchSubscriptionNodes(subscription.url, subscription.name, userAgent, subscription.customUserAgent);
 
     return {
         success: true,
@@ -191,12 +191,18 @@ async function handleDirectUrlMode(subscriptionUrl, userAgent) {
  * @param {string} url - 订阅URL
  * @param {string} subscriptionName - 订阅名称
  * @param {string} userAgent - 用户代理
+ * @param {string} customUserAgent - 自定义用户代理 (可选)
  * @returns {Promise<Object>} 节点获取结果
  */
-async function fetchSubscriptionNodes(url, subscriptionName, userAgent) {
+async function fetchSubscriptionNodes(url, subscriptionName, userAgent, customUserAgent = null) {
     try {
+        // [增强] 支持自定义 UA
+        const effectiveUserAgent = customUserAgent && customUserAgent.trim() !== ''
+            ? customUserAgent
+            : userAgent;
+
         const response = await fetch(new Request(url, {
-            headers: { 'User-Agent': userAgent },
+            headers: { 'User-Agent': effectiveUserAgent },
             redirect: "follow",
             cf: { insecureSkipVerify: true }
         }));
@@ -213,17 +219,7 @@ async function fetchSubscriptionNodes(url, subscriptionName, userAgent) {
 
         let text = await response.text();
 
-        console.log(`[DEBUG] Preview API: Raw text length: ${text.length}`);
-        console.log(`[DEBUG] Preview API: Raw text preview:`, text.substring(0, 200) + '...');
-
-        // 智能内容类型检测和Base64解码
-        const processedText = decodeAndProcessContent(text);
-
-        console.log(`[DEBUG] Preview API: Processed text length: ${processedText.length}`);
-        console.log(`[DEBUG] Preview API: Content changed after processing: ${processedText !== text}`);
-
-        // 解析节点列表
-        const parsedNodes = parseNodeList(processedText);
+        const parsedNodes = parseNodeList(text);
 
         console.log(`[DEBUG] Preview API: Final node count: ${parsedNodes.length}`);
 
