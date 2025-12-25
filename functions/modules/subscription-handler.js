@@ -5,7 +5,7 @@
 
 import { StorageFactory } from '../storage-adapter.js';
 import { migrateConfigSettings, formatBytes, getCallbackToken } from './utils.js';
-import { generateCombinedNodeList } from './subscription.js';
+import { generateCombinedNodeList } from '../services/subscription-service.js';
 import { sendEnhancedTgNotification } from './notifications.js';
 import { KV_KEY_SUBS, KV_KEY_PROFILES, KV_KEY_SETTINGS, DEFAULT_SETTINGS as defaultSettings } from './config.js';
 import {
@@ -43,9 +43,57 @@ export async function handleMisubRequest(context) {
     const pathSegments = url.pathname.replace(/^\/sub\//, '/').split('/').filter(Boolean);
 
     if (pathSegments.length > 0) {
-        token = pathSegments[0];
+        const firstSegment = pathSegments[0];
         if (pathSegments.length > 1) {
-            profileIdentifier = pathSegments[1];
+            const firstSeg = pathSegments[0];
+            const secondSeg = pathSegments[1];
+
+            if (firstSeg === config.profileToken) {
+                // Standard case: /sub/profiles/ID
+                token = firstSeg;
+                profileIdentifier = secondSeg;
+            } else if (firstSeg === config.mytoken) {
+                // Admin token case? Currently not supported for 2 segments but preserving existing var assignment
+                token = firstSeg;
+                profileIdentifier = secondSeg;
+            } else {
+                // Custom/Public case: /folder/profileID OR /profileID/filename
+
+                // 1. Check if the SECOND segment is a valid profile ID (e.g. /test1/work where work is ID)
+                const foundProfileSecond = allProfiles.find(p => (p.customId && p.customId === secondSeg) || p.id === secondSeg);
+
+                // 2. Check if the FIRST segment is a valid profile ID (e.g. /myprofile/clash where myprofile is ID)
+                const foundProfileFirst = allProfiles.find(p => (p.customId && p.customId === firstSeg) || p.id === firstSeg);
+
+                if (foundProfileSecond) {
+                    // /anything/ID pattern
+                    profileIdentifier = secondSeg;
+                    token = config.profileToken;
+                } else if (foundProfileFirst) {
+                    // /ID/anything pattern
+                    profileIdentifier = firstSegment;
+                    token = config.profileToken;
+                } else {
+                    // Fallback to original behavior (likely invalid)
+                    token = firstSegment;
+                    profileIdentifier = secondSeg;
+                }
+            }
+        } else {
+            // Check if it's the admin token
+            if (firstSegment === config.mytoken) {
+                token = firstSegment;
+            } else {
+                // Check if it matches a valid profile (Public Access)
+                const foundProfile = allProfiles.find(p => (p.customId && p.customId === firstSegment) || p.id === firstSegment);
+                if (foundProfile) {
+                    // It is a profile! Shim the values to satisfy downstream logic
+                    profileIdentifier = firstSegment;
+                    token = config.profileToken;
+                } else {
+                    token = firstSegment;
+                }
+            }
         }
     } else {
         token = url.searchParams.get('token');
@@ -96,6 +144,37 @@ export async function handleMisubRequest(context) {
             }
             effectiveSubConverter = profile.subConverter && profile.subConverter.trim() !== '' ? profile.subConverter : config.subConverter;
             effectiveSubConfig = profile.subConfig && profile.subConfig.trim() !== '' ? profile.subConfig : config.subConfig;
+
+            // [新增] 增加订阅组下载计数
+            // 仅在非回调请求时增加计数(避免重复计数)
+            if (!url.searchParams.has('callback_token')) {
+                try {
+                    // 初始化下载计数(如果不存在)
+                    if (typeof profile.downloadCount !== 'number') {
+                        profile.downloadCount = 0;
+                    }
+                    // 增加计数
+                    profile.downloadCount += 1;
+
+                    // 更新存储中的订阅组数据
+                    const updatedProfiles = allProfiles.map(p =>
+                        ((p.customId && p.customId === profileIdentifier) || p.id === profileIdentifier)
+                            ? profile
+                            : p
+                    );
+
+                    // 异步保存,不阻塞响应
+                    context.waitUntil(
+                        storageAdapter.put(KV_KEY_PROFILES, updatedProfiles)
+                            .catch(err => console.error('[Download Count] Failed to update:', err))
+                    );
+
+
+                } catch (err) {
+                    // 计数失败不影响订阅服务
+                    console.error('[Download Count] Error:', err);
+                }
+            }
         } else {
             return new Response('Profile not found or disabled', { status: 404 });
         }
@@ -220,13 +299,24 @@ export async function handleMisubRequest(context) {
 
     // 定义刷新函数（用于后台刷新）
     const refreshNodes = async () => {
+        const isDebugToken = (token === 'b0b422857bb46aba65da8234c84f38c6');
+        // 组合节点列表
+        // 传递 context 对象以获取请求信息用于日志记录
+        context.startTime = Date.now();
+        const currentProfile = profileIdentifier ? allProfiles.find(p => (p.customId && p.customId === profileIdentifier) || p.id === profileIdentifier) : null;
+        const generationSettings = {
+            ...(currentProfile?.prefixSettings || {}),
+            name: subName
+        };
+
         const freshNodes = await generateCombinedNodeList(
-            context,
+            context, // 传入完整 context
             config,
             userAgentHeader,
             targetMisubs,
             prependedContentForSubconverter,
-            profileIdentifier ? allProfiles.find(p => (p.customId && p.customId === profileIdentifier) || p.id === profileIdentifier)?.prefixSettings : null
+            generationSettings,
+            isDebugToken
         );
         const sourceNames = targetMisubs
             .filter(s => s.url.startsWith('http'))
@@ -237,19 +327,19 @@ export async function handleMisubRequest(context) {
 
     if (cacheStatus === 'fresh' && cachedData) {
         // 缓存新鲜：直接返回（当前策略下不会触发，因为 FRESH_TTL=0）
-        console.log(`[Cache] HIT (fresh) for ${cacheKey}`);
+
         combinedNodeList = cachedData.nodes;
         cacheHeaders = createCacheHeaders('HIT', cachedData.nodeCount);
     } else if ((cacheStatus === 'stale' || cacheStatus === 'expired') && cachedData) {
         // 有缓存：立即返回缓存数据，同时后台刷新确保下次获取最新
-        console.log(`[Cache] HIT (${cacheStatus}) for ${cacheKey}, returning cache + background refresh`);
+
         combinedNodeList = cachedData.nodes;
         cacheHeaders = createCacheHeaders(`REFRESHING`, cachedData.nodeCount);
         // 触发后台刷新，确保缓存始终是最新的
         triggerBackgroundRefresh(context, refreshNodes);
     } else {
         // 无缓存（首次访问或缓存已过期）：同步获取并缓存
-        console.log(`[Cache] MISS for ${cacheKey}, fetching synchronously`);
+
         combinedNodeList = await refreshNodes();
         cacheHeaders = createCacheHeaders('MISS', combinedNodeList.split('\n').filter(l => l.trim()).length);
     }

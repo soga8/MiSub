@@ -8,7 +8,7 @@ const props = defineProps({
   },
 });
 
-const emit = defineEmits(['delete', 'change', 'edit', 'copy-link', 'preview', 'move-up', 'move-down']);
+const emit = defineEmits(['delete', 'change', 'edit', 'copy-link', 'preview', 'move-up', 'move-down', 'view-logs']);
 
 </script>
 
@@ -24,16 +24,7 @@ const emit = defineEmits(['delete', 'change', 'edit', 'copy-link', 'preview', 'm
       </p>
 
       <div class="shrink-0 flex items-center gap-1 lg:opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-        <button @click="emit('move-up')" class="p-1.5 rounded-full hover:bg-gray-500/10 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200" title="上移">
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7" />
-          </svg>
-        </button>
-        <button @click="emit('move-down')" class="p-1.5 rounded-full hover:bg-gray-500/10 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200" title="下移">
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
+
         <button @click="emit('preview')" class="p-1.5 rounded-full hover:bg-blue-500/10 text-gray-400 hover:text-blue-500 dark:hover:text-blue-400" title="预览节点">
           <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -55,7 +46,7 @@ const emit = defineEmits(['delete', 'change', 'edit', 'copy-link', 'preview', 'm
     
     <!-- 单独一行显示包含信息 -->
     <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-      包含 {{ profile.subscriptions.length }} 个订阅，{{ profile.manualNodes.length }} 个节点
+      包含 {{ profile.subscriptions.length }} 个订阅,{{ profile.manualNodes.length }} 个节点
     </p>
 
     <div class="flex justify-between items-center mt-3">
@@ -70,5 +61,34 @@ const emit = defineEmits(['delete', 'change', 'edit', 'copy-link', 'preview', 'm
         复制
       </button>
     </div>
+
+    <!-- 下载统计 -->
+    <div class="mt-2 flex items-center justify-between gap-2">
+      <div class="flex items-start gap-2 text-xs text-gray-600 dark:text-gray-400">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+        </svg>
+        <span class="break-words flex-1">被订阅 {{ profile.downloadCount || 0 }} 次</span>
+      </div>
+      
+      <div class="flex items-center gap-1 lg:opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+        <button @click.stop="emit('view-logs')" class="p-1 rounded-full hover:bg-gray-500/10 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 mr-1" title="查看日志">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+        </button>
+        <button @click="emit('move-up')" class="p-1 rounded-full hover:bg-gray-500/10 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200" title="上移">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7" />
+          </svg>
+        </button>
+        <button @click="emit('move-down')" class="p-1 rounded-full hover:bg-gray-500/10 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200" title="下移">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+      </div>
+    </div>
+
   </div>
 </template>
