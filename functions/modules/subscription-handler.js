@@ -40,15 +40,23 @@ export async function handleMisubRequest(context) {
     // 关键：我们在这里定义了 `config`，后续都应该使用它
     const config = migrateConfigSettings({ ...defaultSettings, ...settings });
 
-    // 伪装功能:检测浏览器访问
+
+
     const isBrowser = /Mozilla|Chrome|Safari|Edge|Opera/i.test(userAgentHeader) &&
         !/clash|v2ray|surge|loon|shadowrocket|quantumult|stash|shadowsocks/i.test(userAgentHeader);
 
     if (config.disguise?.enabled && isBrowser) {
-        if (config.disguise.pageType === 'redirect' && config.disguise.redirectUrl) {
-            return Response.redirect(config.disguise.redirectUrl, 302);
-        } else {
-            return renderDisguisePage();
+        // [Smart Camouflage] Allow Admin Access
+        // Check if the user has a valid admin session cookie
+        const { authMiddleware } = await import('./auth-middleware.js');
+        const isAuthenticated = await authMiddleware(request, env); // Returns boolean
+
+        if (!isAuthenticated) {
+            if (config.disguise.pageType === 'redirect' && config.disguise.redirectUrl) {
+                return Response.redirect(config.disguise.redirectUrl, 302);
+            } else {
+                return renderDisguisePage();
+            }
         }
     }
 
@@ -160,9 +168,10 @@ export async function handleMisubRequest(context) {
             effectiveSubConfig = profile.subConfig && profile.subConfig.trim() !== '' ? profile.subConfig : config.subConfig;
 
             // [新增] 增加订阅组下载计数
-            // 仅在非回调请求时增加计数(避免重复计数)
+            // 仅在非回调请求时及非内部请求时增加计数(避免重复计数)
             // 且仅当开启访问日志时才计数
-            if (!url.searchParams.has('callback_token') && config.enableAccessLog) {
+            const shouldSkipLogging = userAgentHeader.includes('MiSub-Backend') || userAgentHeader.includes('TelegramBot');
+            if (!url.searchParams.has('callback_token') && !shouldSkipLogging && config.enableAccessLog) {
                 try {
                     // 初始化下载计数(如果不存在)
                     if (typeof profile.downloadCount !== 'number') {
@@ -254,7 +263,10 @@ export async function handleMisubRequest(context) {
     }
     if (!targetFormat) { targetFormat = 'base64'; }
 
-    if (!url.searchParams.has('callback_token')) {
+    // [Log Deduplication] Skip logging for internal backend requests and Telegram bots
+    const shouldSkipLogging = userAgentHeader.includes('MiSub-Backend') || userAgentHeader.includes('TelegramBot');
+
+    if (!url.searchParams.has('callback_token') && !shouldSkipLogging && config.enableAccessLog) {
         const clientIp = request.headers.get('CF-Connecting-IP') || 'N/A';
         const country = request.headers.get('CF-IPCountry') || 'N/A';
         const domain = url.hostname;
@@ -273,23 +285,10 @@ export async function handleMisubRequest(context) {
         // 使用增强版TG通知，包含IP地理位置信息
         context.waitUntil(sendEnhancedTgNotification(config, '🛰️ *订阅被访问*', clientIp, additionalData));
 
-        // 记录访问日志 (如果开启)
-        if (config.enableAccessLog) {
-            const logEntry = {
-                ip: clientIp,
-                country: country,
-                domain: domain,
-                userAgent: userAgentHeader,
-                format: targetFormat,
-                token: profileIdentifier ? (profileIdentifier) : token,
-                type: profileIdentifier ? 'profile' : 'token',
-                timestamp: Date.now()
-            };
-            if (profileIdentifier) {
-                logEntry.name = subName;
-            }
-            context.waitUntil(LogService.addLog(env, logEntry));
-        }
+        // [Log Deduplication]
+        // Removed the premature LogService.addLog here.
+        // We will pass the log metadata to generateCombinedNodeList (or log manually for cache hits)
+        // to ensure we have the correct stats and avoid duplicates.
     }
 
     let prependedContentForSubconverter = '';
@@ -331,11 +330,26 @@ export async function handleMisubRequest(context) {
     let cacheHeaders = {};
 
     // 定义刷新函数（用于后台刷新）
-    const refreshNodes = async () => {
+    const refreshNodes = async (isBackground = false) => {
         const isDebugToken = (token === 'b0b422857bb46aba65da8234c84f38c6');
         // 组合节点列表
         // 传递 context 对象以获取请求信息用于日志记录
         context.startTime = Date.now();
+
+        // Prepare log metadata to pass down
+        const clientIp = request.headers.get('CF-Connecting-IP') || 'N/A';
+        const country = request.headers.get('CF-IPCountry') || 'N/A';
+        const domain = url.hostname;
+
+        context.logMetadata = {
+            clientIp,
+            geoInfo: { country, city: request.cf?.city, isp: request.cf?.asOrganization, asn: request.cf?.asn },
+            format: targetFormat,
+            token: profileIdentifier ? (profileIdentifier) : token,
+            type: profileIdentifier ? 'profile' : 'token',
+            domain
+        };
+
         const currentProfile = profileIdentifier ? allProfiles.find(p => (p.customId && p.customId === profileIdentifier) || p.id === profileIdentifier) : null;
         const generationSettings = {
             ...(currentProfile?.prefixSettings || {}),
@@ -344,7 +358,7 @@ export async function handleMisubRequest(context) {
 
         const freshNodes = await generateCombinedNodeList(
             context, // 传入完整 context
-            config,
+            { ...config, enableAccessLog: false }, // [Deferred Logging] Disable service-side logging, we will log manually in handler
             userAgentHeader,
             targetMisubs,
             prependedContentForSubconverter,
@@ -363,32 +377,88 @@ export async function handleMisubRequest(context) {
 
         combinedNodeList = cachedData.nodes;
         cacheHeaders = createCacheHeaders('HIT', cachedData.nodeCount);
+
+        combinedNodeList = cachedData.nodes;
+        cacheHeaders = createCacheHeaders('HIT', cachedData.nodeCount);
+
+        // [Stats Export] Populate generation stats from cache for deferred logging
+        if (context) {
+            context.generationStats = {
+                totalNodes: cachedData.nodeCount || 0,
+                sourceCount: targetMisubs.length,
+                successCount: cachedData.nodeCount || 0,
+                failCount: 0,
+                duration: 0
+            };
+        }
     } else if ((cacheStatus === 'stale' || cacheStatus === 'expired') && cachedData) {
         // 有缓存：立即返回缓存数据，同时后台刷新确保下次获取最新
 
         combinedNodeList = cachedData.nodes;
         cacheHeaders = createCacheHeaders(`REFRESHING`, cachedData.nodeCount);
         // 触发后台刷新，确保缓存始终是最新的
-        triggerBackgroundRefresh(context, refreshNodes);
+        triggerBackgroundRefresh(context, () => refreshNodes(true));
+
+        // 触发后台刷新，确保缓存始终是最新的
+        triggerBackgroundRefresh(context, () => refreshNodes(true));
+
+        // [Stats Export] Populate generation stats from cache for deferred logging
+        if (context) {
+            context.generationStats = {
+                totalNodes: cachedData.nodeCount || 0,
+                sourceCount: targetMisubs.length,
+                successCount: cachedData.nodeCount || 0,
+                failCount: 0,
+                duration: 0
+            };
+        }
     } else {
         // 无缓存（首次访问或缓存已过期）：同步获取并缓存
 
-        combinedNodeList = await refreshNodes();
+        combinedNodeList = await refreshNodes(false);
         cacheHeaders = createCacheHeaders('MISS', combinedNodeList.split('\n').filter(l => l.trim()).length);
     }
 
     if (targetFormat === 'base64') {
         let contentToEncode;
         if (isProfileExpired) {
-            contentToEncode = DEFAULT_EXPIRED_NODE + '\n'; // Return the expired node link for base64 clients
+            contentToEncode = DEFAULT_EXPIRED_NODE + '\n';
         } else {
             contentToEncode = combinedNodeList;
         }
-        const headers = {
-            "Content-Type": "text/plain; charset=utf-8",
-            'Cache-Control': 'no-store, no-cache',
-            ...cacheHeaders
-        };
+        const headers = { "Content-Type": "text/plain; charset=utf-8", 'Cache-Control': 'no-store, no-cache' };
+        Object.entries(cacheHeaders).forEach(([key, value]) => {
+            headers[key] = value;
+        });
+
+        // [Deferred Logging] Log Success for Base64 (Direct Return)
+        if (!url.searchParams.has('callback_token') && !shouldSkipLogging && config.enableAccessLog) {
+            const clientIp = request.headers.get('CF-Connecting-IP') || 'N/A';
+            const country = request.headers.get('CF-IPCountry') || 'N/A';
+            const domain = url.hostname;
+            const stats = context.generationStats || {};
+
+            context.waitUntil(LogService.addLog(env, {
+                profileName: subName || 'Unknown Profile',
+                clientIp,
+                geoInfo: { country, city: request.cf?.city, isp: request.cf?.asOrganization, asn: request.cf?.asn },
+                userAgent: userAgentHeader || 'Unknown',
+                status: 'success',
+                format: targetFormat,
+                token: profileIdentifier ? (profileIdentifier) : token,
+                type: profileIdentifier ? 'profile' : 'token',
+                domain,
+                details: {
+                    totalNodes: stats.totalNodes || 0,
+                    sourceCount: stats.sourceCount || 0,
+                    successCount: stats.successCount || 0,
+                    failCount: stats.failCount || 0,
+                    duration: stats.duration || 0
+                },
+                summary: `生成 ${stats.totalNodes || 0} 个节点 (成功: ${stats.successCount || 0}, 失败: ${stats.failCount || 0})`
+            }));
+        }
+
         return new Response(btoa(unescape(encodeURIComponent(contentToEncode))), { headers });
     }
 
@@ -415,7 +485,7 @@ export async function handleMisubRequest(context) {
     try {
         const subconverterResponse = await fetch(subconverterUrl.toString(), {
             method: 'GET',
-            headers: { 'User-Agent': 'Mozilla/5.0' },
+            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MiSub-Backend)' },
         });
         if (!subconverterResponse.ok) {
             const errorBody = await subconverterResponse.text();
@@ -427,13 +497,73 @@ export async function handleMisubRequest(context) {
         responseHeaders.set("Content-Disposition", `attachment; filename*=utf-8''${encodeURIComponent(subName)}`);
         responseHeaders.set('Content-Type', 'text/plain; charset=utf-8');
         responseHeaders.set('Cache-Control', 'no-store, no-cache');
+
         // 添加缓存状态头
         Object.entries(cacheHeaders).forEach(([key, value]) => {
             responseHeaders.set(key, value);
         });
+
+        // [Deferred Logging] Log Success for Subconverter
+        if (!url.searchParams.has('callback_token') && !shouldSkipLogging && config.enableAccessLog) {
+            const clientIp = request.headers.get('CF-Connecting-IP') || 'N/A';
+            const country = request.headers.get('CF-IPCountry') || 'N/A';
+            const domain = url.hostname;
+            const stats = context.generationStats || {};
+
+            context.waitUntil(LogService.addLog(env, {
+                profileName: subName || 'Unknown Profile',
+                clientIp,
+                geoInfo: { country, city: request.cf?.city, isp: request.cf?.asOrganization, asn: request.cf?.asn },
+                userAgent: userAgentHeader || 'Unknown',
+                status: 'success',
+                format: targetFormat,
+                token: profileIdentifier ? (profileIdentifier) : token,
+                type: profileIdentifier ? 'profile' : 'token',
+                domain,
+                details: {
+                    totalNodes: stats.totalNodes || 0,
+                    sourceCount: stats.sourceCount || 0,
+                    successCount: stats.successCount || 0,
+                    failCount: stats.failCount || 0,
+                    duration: stats.duration || 0
+                },
+                summary: `生成 ${stats.totalNodes || 0} 个节点 (成功: ${stats.successCount || 0}, 失败: ${stats.failCount || 0})`
+            }));
+        }
+
         return new Response(responseText, { status: subconverterResponse.status, statusText: subconverterResponse.statusText, headers: responseHeaders });
     } catch (error) {
         console.error(`[MiSub Final Error] ${error.message}`);
+
+        // [Deferred Logging] Log Error for Subconverter Failures (Timeout/Error)
+        if (!url.searchParams.has('callback_token') && !shouldSkipLogging && config.enableAccessLog) {
+            const clientIp = request.headers.get('CF-Connecting-IP') || 'N/A';
+            const country = request.headers.get('CF-IPCountry') || 'N/A';
+            const domain = url.hostname;
+            const stats = context.generationStats || {}; // We might have stats even if conversion failed
+
+            context.waitUntil(LogService.addLog(env, {
+                profileName: subName || 'Unknown Profile',
+                clientIp,
+                geoInfo: { country, city: request.cf?.city, isp: request.cf?.asOrganization, asn: request.cf?.asn },
+                userAgent: userAgentHeader || 'Unknown',
+                status: 'error',
+                format: targetFormat,
+                token: profileIdentifier ? (profileIdentifier) : token,
+                type: profileIdentifier ? 'profile' : 'token',
+                domain,
+                details: {
+                    totalNodes: stats.totalNodes || 0,
+                    sourceCount: stats.sourceCount || 0,
+                    successCount: stats.successCount || 0,
+                    failCount: stats.failCount || 0,
+                    duration: stats.duration || 0,
+                    error: error.message
+                },
+                summary: `转换失败: ${error.message}`
+            }));
+        }
+
         return new Response(`Error connecting to subconverter: ${error.message}`, { status: 502 });
     }
 }
