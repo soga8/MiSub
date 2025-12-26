@@ -11,7 +11,7 @@ const props = defineProps({
   isSorting: Boolean,
 });
 
-const emit = defineEmits(['add', 'delete', 'changePage', 'updateNodeCount', 'edit', 'toggleSort', 'markDirty', 'preview', 'deleteAll', 'refreshAll', 'reorder']);
+const emit = defineEmits(['add', 'delete', 'changePage', 'updateNodeCount', 'edit', 'toggleSort', 'markDirty', 'preview', 'deleteAll', 'refreshAll', 'reorder', 'import']);
 
 const draggableSubscriptions = computed({
     get: () => [...props.subscriptions],
@@ -40,6 +40,10 @@ const handleRefreshAll = () => {
   emit('refreshAll');
   showSubsMoreMenu.value = false;
 }
+const handleImport = () => {
+  emit('import');
+  showSubsMoreMenu.value = false;
+}
 
 // 添加点击外部关闭下拉菜单的功能
 const handleClickOutside = (event) => {
@@ -59,12 +63,13 @@ onUnmounted(() => {
 
 <template>
   <div>
-    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 gap-4">
-      <div class="flex items-center gap-3">
+    <div class="flex flex-row items-center justify-between mb-4 gap-4">
+      <div class="flex items-center gap-3 shrink-0">
         <h2 class="text-xl font-bold text-gray-900 dark:text-white">机场订阅</h2>
         <span class="px-2.5 py-0.5 text-sm font-semibold text-gray-700 dark:text-gray-200 bg-gray-200 dark:bg-gray-700/50 rounded-full">{{ subscriptions.length }}</span>
       </div>
-      <div class="flex items-center gap-2 w-full sm:w-auto justify-end sm:justify-start">
+      <div class="flex items-center gap-2">
+        <slot name="actions-prepend"></slot>
         <button @click="handleAdd" class="text-sm font-semibold px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white transition-colors shadow-xs shrink-0">新增</button>
         <div class="relative shrink-0" ref="subsMoreMenuRef">
           <button @click="showSubsMoreMenu = !showSubsMoreMenu" class="p-2.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
@@ -72,6 +77,10 @@ onUnmounted(() => {
           </button>
           <Transition name="slide-fade-sm">
             <div v-if="showSubsMoreMenu" class="absolute right-0 mt-2 w-36 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-xl shadow-lg dark:shadow-2xl z-50 ring-1 ring-black/5">
+              <button @click="handleImport" class="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700">
+                批量导入
+              </button>
+              <div class="border-t border-gray-100 dark:border-gray-700/50 my-1"></div>
               <button @click="handleRefreshAll" class="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700">
                 全部刷新
               </button>

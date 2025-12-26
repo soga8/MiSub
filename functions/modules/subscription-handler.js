@@ -7,7 +7,9 @@ import { StorageFactory } from '../storage-adapter.js';
 import { migrateConfigSettings, formatBytes, getCallbackToken } from './utils.js';
 import { generateCombinedNodeList } from '../services/subscription-service.js';
 import { sendEnhancedTgNotification } from './notifications.js';
+import { LogService } from '../services/log-service.js';
 import { KV_KEY_SUBS, KV_KEY_PROFILES, KV_KEY_SETTINGS, DEFAULT_SETTINGS as defaultSettings } from './config.js';
+import { renderDisguisePage } from './disguise-page.js';
 import {
     generateCacheKey,
     getCache,
@@ -37,6 +39,18 @@ export async function handleMisubRequest(context) {
     const allProfiles = profilesData || [];
     // 关键：我们在这里定义了 `config`，后续都应该使用它
     const config = migrateConfigSettings({ ...defaultSettings, ...settings });
+
+    // 伪装功能:检测浏览器访问
+    const isBrowser = /Mozilla|Chrome|Safari|Edge|Opera/i.test(userAgentHeader) &&
+        !/clash|v2ray|surge|loon|shadowrocket|quantumult|stash|shadowsocks/i.test(userAgentHeader);
+
+    if (config.disguise?.enabled && isBrowser) {
+        if (config.disguise.pageType === 'redirect' && config.disguise.redirectUrl) {
+            return Response.redirect(config.disguise.redirectUrl, 302);
+        } else {
+            return renderDisguisePage();
+        }
+    }
 
     let token = '';
     let profileIdentifier = null;
@@ -147,7 +161,8 @@ export async function handleMisubRequest(context) {
 
             // [新增] 增加订阅组下载计数
             // 仅在非回调请求时增加计数(避免重复计数)
-            if (!url.searchParams.has('callback_token')) {
+            // 且仅当开启访问日志时才计数
+            if (!url.searchParams.has('callback_token') && config.enableAccessLog) {
                 try {
                     // 初始化下载计数(如果不存在)
                     if (typeof profile.downloadCount !== 'number') {
@@ -257,6 +272,24 @@ export async function handleMisubRequest(context) {
 
         // 使用增强版TG通知，包含IP地理位置信息
         context.waitUntil(sendEnhancedTgNotification(config, '🛰️ *订阅被访问*', clientIp, additionalData));
+
+        // 记录访问日志 (如果开启)
+        if (config.enableAccessLog) {
+            const logEntry = {
+                ip: clientIp,
+                country: country,
+                domain: domain,
+                userAgent: userAgentHeader,
+                format: targetFormat,
+                token: profileIdentifier ? (profileIdentifier) : token,
+                type: profileIdentifier ? 'profile' : 'token',
+                timestamp: Date.now()
+            };
+            if (profileIdentifier) {
+                logEntry.name = subName;
+            }
+            context.waitUntil(LogService.addLog(env, logEntry));
+        }
     }
 
     let prependedContentForSubconverter = '';
