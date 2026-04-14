@@ -2,8 +2,8 @@ name: 每小时自动同步上游 (Sync Fork with Upstream)
 
 on:
   schedule:
-    - cron: '0 * * * *'     # 每小时的第0分钟运行（即每整点）
-  workflow_dispatch:        # 允许你手动点击运行测试
+    - cron: '0 * * * *'      # 每小时整点运行一次（UTC 时间）
+  workflow_dispatch:         # 允许你手动触发测试
 
 jobs:
   sync:
@@ -12,7 +12,7 @@ jobs:
       - name: Checkout your repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0          # 需要完整历史记录来合并
+          fetch-depth: 0        # 需要完整历史记录才能正确合并
 
       - name: 自动同步上游仓库
         uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
@@ -20,4 +20,4 @@ jobs:
           upstream_repository: imzyb/MiSub
           upstream_branch: main
           target_branch: main
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # github_token: ${{ secrets.GITHUB_TOKEN }}   # 通常不需要手动写
