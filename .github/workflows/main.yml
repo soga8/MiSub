@@ -2,8 +2,8 @@ name: 每小时自动同步上游 (Sync Fork with Upstream)
 
 on:
   schedule:
-    - cron: '0 * * * *'      # 每小时整点运行一次（UTC 时间，北京时间约早上 8 点）
-  workflow_dispatch:         # 允许你手动点击运行测试
+    - cron: '0 */1 * * *'      # 推荐改成每 3 小时一次（够用且更省资源）
+  workflow_dispatch:
 
 jobs:
   sync:
@@ -18,7 +18,5 @@ jobs:
         uses: tgymnich/fork-sync@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          # owner 和 repo 可以不写，action 会自动使用当前仓库
-          base: main           # 上游（原作者 imzyb/MiSub）的分支
-          head: main           # 你的分支（要更新到的分支）
-          merge_method: merge  # 可选：merge / rebase / squash
+          base: main           # 原作者的上游分支
+          head: main           # 你的分支
