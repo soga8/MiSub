@@ -9,7 +9,14 @@
 
 import { urlToClashProxy, urlsToClashProxies } from '../../utils/url-to-clash.js';
 import { getUniqueName } from './name-utils.js';
-import { POLICY_GROUPS, getBuiltinRules, getRemoteProviderDefinitions, DEFAULT_SELECT_GROUP, DEFAULT_RELAY_GROUP, pruneProxyGroups } from './builtin-rules-provider.js';
+import {
+    POLICY_GROUPS,
+    getBuiltinRules,
+    getRemoteProviderDefinitions,
+    DEFAULT_SELECT_GROUP,
+    DEFAULT_RELAY_GROUP,
+    pruneProxyGroups,
+} from './builtin-rules-provider.js';
 
 /**
  * 清理字符串中的控制字符（保留换行和制表符）
@@ -67,6 +74,8 @@ function clashProxyToSurgeResult(proxy) {
 
     const name = sanitizeNodeName(proxy.name);
     const type = (proxy.type || '').toLowerCase();
+    if (type === 'vless') return null;
+
     const server = proxy.server;
     const port = proxy.port;
 
@@ -246,37 +255,6 @@ function clashProxyToSurgeResult(proxy) {
         // SOCKS5 的 UDP 需要手动开启
         if (proxy.udp) parts.push('udp-relay=true');
         if (type === 'socks5-tls') appendTlsParams(parts, proxy);
-    } else if (type === 'vless') {
-        // 解锁 VLESS 支持，即使原生 Surge 不直接解析，也能通过第三方模块或特定版本使用，且防止节点丢失
-        parts.push(`${name} = vless`);
-        parts.push(server);
-        parts.push(String(port));
-        parts.push(`username=${proxy.uuid || ''}`);
-
-        // TLS / Reality 支持
-        const isReality = proxy.security === 'reality' || !!proxy['reality-opts'];
-        if (proxy.tls || isReality) {
-            parts.push('tls=true');
-            if (isReality) {
-                parts.push('reality=true');
-                const realityOpts = proxy['reality-opts'] || {};
-                if (realityOpts['public-key']) parts.push(`public-key=${surgeQuote(realityOpts['public-key'])}`);
-                if (realityOpts['short-id']) parts.push(`short-id=${surgeQuote(realityOpts['short-id'])}`);
-            }
-        }
-
-        // 传输层支持 (虽然 Surge 原生支持有限，但保留元数据)
-        if (proxy.network === 'ws') {
-            parts.push('ws=true');
-            const wsOpts = proxy['ws-opts'] || proxy.wsOpts;
-            if (wsOpts?.path) parts.push(`ws-path=${wsOpts.path}`);
-            if (wsOpts?.headers?.Host) parts.push(`ws-headers=Host:${wsOpts.headers.Host}`);
-        } else if (proxy.network === 'grpc') {
-            const grpcOpts = proxy['grpc-opts'] || proxy.grpcOpts;
-            if (grpcOpts?.['grpc-service-name']) parts.push(`grpc-service-name=${surgeQuote(grpcOpts['grpc-service-name'])}`);
-        }
-
-        appendTlsParams(parts, proxy);
     } else {
         // 不支持的类型
         return null;
@@ -291,14 +269,15 @@ function clashProxyToSurgeResult(proxy) {
     if (proxy['shadow-tls-password']) {
         parts.push(`shadow-tls-password=${proxy['shadow-tls-password']}`);
         if (proxy['shadow-tls-sni']) parts.push(`shadow-tls-sni=${proxy['shadow-tls-sni']}`);
-        if (proxy['shadow-tls-version']) parts.push(`shadow-tls-version=${proxy['shadow-tls-version']}`);
+        if (proxy['shadow-tls-version'])
+            parts.push(`shadow-tls-version=${proxy['shadow-tls-version']}`);
     }
 
     // TCP Fast Open
     if (proxy.tfo) {
         // 大多数协议在 Surge 中支持 tfo=true
         // 注意：Snell 已经在上面单独处理过了，这里加一个判断避免重复
-        if (type !== 'snell' && !parts.some(p => p.startsWith('tfo='))) {
+        if (type !== 'snell' && !parts.some((p) => p.startsWith('tfo='))) {
             parts.push('tfo=true');
         }
     }
@@ -327,12 +306,27 @@ function buildWireGuardResult(name, proxy) {
     }
 
     // self-ip（本地隧道地址）
+    // if (proxy.ip) {
+    //     const ips = Array.isArray(proxy.ip) ? proxy.ip : [proxy.ip];
+    //     const ipv4 = ips.find(ip => !ip.includes(':'));
+    //     const ipv6 = ips.find(ip => ip.includes(':'));
+    //     if (ipv4) wgLines.push(`self-ip = ${ipv4}`);
+    //     if (ipv6) wgLines.push(`self-ip-v6 = ${ipv6}`);
+    // }
     if (proxy.ip) {
-        const ips = Array.isArray(proxy.ip) ? proxy.ip : [proxy.ip];
-        const ipv4 = ips.find(ip => !ip.includes(':'));
-        const ipv6 = ips.find(ip => ip.includes(':'));
-        if (ipv4) wgLines.push(`self-ip = ${ipv4}`);
-        if (ipv6) wgLines.push(`self-ip-v6 = ${ipv6}`);
+        const ipv4 = Array.isArray(proxy.ip) ? proxy.ip.find((ip) => !ip.includes(':')) : proxy.ip;
+
+        if (ipv4) {
+            wgLines.push(`self-ip = ${ipv4}`);
+        }
+    }
+
+    if (proxy.ipv6) {
+        const ipv6 = Array.isArray(proxy.ipv6) ? proxy.ipv6.find(Boolean) : proxy.ipv6;
+
+        if (ipv6) {
+            wgLines.push(`self-ip-v6 = ${ipv6}`);
+        }
     }
 
     // DNS 服务器
@@ -355,7 +349,9 @@ function buildWireGuardResult(name, proxy) {
     }
     // allowed-ips
     const allowedIps = proxy['allowed-ips']
-        ? (Array.isArray(proxy['allowed-ips']) ? proxy['allowed-ips'].join(', ') : proxy['allowed-ips'])
+        ? Array.isArray(proxy['allowed-ips'])
+            ? proxy['allowed-ips'].join(', ')
+            : proxy['allowed-ips']
         : '0.0.0.0/0, ::/0';
     peerParts.push(`allowed-ips = "${allowedIps}"`);
     // endpoint
@@ -380,7 +376,7 @@ function buildWireGuardResult(name, proxy) {
 
     return {
         proxyLine,
-        wireguardSection: wgLines.join('\n')
+        wireguardSection: wgLines.join('\n'),
     };
 }
 
@@ -416,14 +412,14 @@ export function generateBuiltinSurgeConfig(nodeList, options = {}) {
         skipCertVerify = false,
         enableUdp = false,
         enableTfo = false,
-        ruleLevel = 'std'
+        ruleLevel = 'std',
     } = options;
 
     const cleanedNodeList = cleanControlChars(nodeList);
     const nodeUrls = cleanedNodeList
         .split('\n')
-        .map(line => line.trim())
-        .filter(line => line && !line.startsWith('#'));
+        .map((line) => line.trim())
+        .filter((line) => line && !line.startsWith('#'));
 
     const results = [];
     const proxyNames = [];
@@ -433,7 +429,7 @@ export function generateBuiltinSurgeConfig(nodeList, options = {}) {
 
     // 应用 UDP 开关
     // (已在 urlsToClashProxies 中全局处理)
-    
+
     for (const clashProxy of proxies) {
         const result = clashProxyToSurgeResult(clashProxy);
         if (result) {
@@ -452,11 +448,18 @@ export function generateBuiltinSurgeConfig(nodeList, options = {}) {
         const uniqueName = getUniqueName(baseName, usedNames);
         if (uniqueName !== baseName) {
             const updatedResult = { ...results[i] };
-            updatedResult.proxyLine = results[i].proxyLine.replace(`${baseName} = `, `${uniqueName} = `);
+            updatedResult.proxyLine = results[i].proxyLine.replace(
+                `${baseName} = `,
+                `${uniqueName} = `
+            );
             if (updatedResult.wireguardSection) {
-                updatedResult.wireguardSection = results[i].wireguardSection
-                    .replace(new RegExp(`WG_${escapeRegExp(baseName.replace(/[^a-zA-Z0-9_\u4e00-\u9fa5]/g, '_'))}`, 'g'),
-                        `WG_${uniqueName.replace(/[^a-zA-Z0-9_\u4e00-\u9fa5]/g, '_')}`);
+                updatedResult.wireguardSection = results[i].wireguardSection.replace(
+                    new RegExp(
+                        `WG_${escapeRegExp(baseName.replace(/[^a-zA-Z0-9_\u4e00-\u9fa5]/g, '_'))}`,
+                        'g'
+                    ),
+                    `WG_${uniqueName.replace(/[^a-zA-Z0-9_\u4e00-\u9fa5]/g, '_')}`
+                );
             }
             finalResults.push(updatedResult);
             finalProxyNames.push(uniqueName);
@@ -470,11 +473,15 @@ export function generateBuiltinSurgeConfig(nodeList, options = {}) {
         return `[General]\nloglevel = notify\n\n[Proxy]\nDIRECT = direct\n\n[Proxy Group]\n\n[Rule]\nFINAL,DIRECT\n`;
     }
 
-    const finalProxyLines = finalResults.map(r => r.proxyLine);
-    const wireguardSections = finalResults.filter(r => r.wireguardSection).map(r => r.wireguardSection);
+    const finalProxyLines = finalResults.map((r) => r.proxyLine);
+    const wireguardSections = finalResults
+        .filter((r) => r.wireguardSection)
+        .map((r) => r.wireguardSection);
 
     const sections = [];
-    const managedLine = managedConfigUrl ? `#!MANAGED-CONFIG ${managedConfigUrl} interval=${interval} strict=false\n\n` : '';
+    const managedLine = managedConfigUrl
+        ? `#!MANAGED-CONFIG ${managedConfigUrl} interval=${interval} strict=false\n\n`
+        : '';
 
     sections.push(`${managedLine}[General]
 loglevel = notify
@@ -485,25 +492,45 @@ dns-server = 119.29.29.29, 223.5.5.5, system`);
 
     const levelKey = (ruleLevel || 'std').toUpperCase();
     const policyFactory = POLICY_GROUPS[levelKey] || POLICY_GROUPS.STD;
-    
+
     // 构造带元数据的代理对象用于策略分组
     const proxiesForGrouping = finalProxyNames.map((name, index) => ({
         tag: name,
         name: name,
-        metadata: finalResults[index].clashProxy?.metadata || {}
+        metadata: finalResults[index].clashProxy?.metadata || {},
     }));
-    
-    let abstractGroups = policyFactory(proxiesForGrouping);
-    abstractGroups = pruneProxyGroups(abstractGroups, proxiesForGrouping);
 
-    // 转换为 Surge [Proxy Group]
-    const proxyGroupLines = abstractGroups.map(group => {
+    // 生成策略组
+    let abstractGroups = policyFactory(proxiesForGrouping, options);
+    if (levelKey === 'RELAY') {
+        abstractGroups = abstractGroups.map((group) =>
+            group.name === '🔗 链式代理'
+                ? { ...group, type: 'relay', proxies: ['入口节点', '落地节点'] }
+                : group
+        );
+        if (!abstractGroups.some((group) => group.name === '落地节点')) {
+            const proxyNames = proxiesForGrouping.map((proxy) => proxy.name);
+            abstractGroups.splice(
+                abstractGroups.findIndex((group) => group.name === '入口节点') + 1,
+                0,
+                {
+                    name: '落地节点',
+                    type: 'select',
+                    proxies: ['♻️ 自动选择', '👋 手动切换', 'DIRECT', ...proxyNames],
+                }
+            );
+        }
+    }
+    const proxyGroupLines = abstractGroups.map((group) => {
         let type = group.type === 'url-test' ? 'url-test' : 'select';
         if (group.type === 'fallback') type = 'fallback';
         if (group.type === 'relay') type = 'relay';
-        
+
         const proxies = group.proxies.join(', ');
-        const extra = type === 'url-test' || type === 'fallback' ? ', url=http://www.gstatic.com/generate_204, interval=300, tolerance=50' : '';
+        const extra =
+            type === 'url-test' || type === 'fallback'
+                ? ', url=http://www.gstatic.com/generate_204, interval=300, tolerance=50'
+                : '';
         return `${group.name} = ${type}, ${proxies}${extra}`;
     });
 
@@ -519,7 +546,7 @@ dns-server = 119.29.29.29, 223.5.5.5, system`);
         'IP-CIDR,172.16.0.0/12,DIRECT',
         'IP-CIDR,192.168.0.0/16,DIRECT',
         ...builtinRuleLines,
-        `FINAL,${levelKey === 'RELAY' ? DEFAULT_RELAY_GROUP : DEFAULT_SELECT_GROUP},dns-failed`
+        `FINAL,${levelKey === 'RELAY' ? DEFAULT_RELAY_GROUP : DEFAULT_SELECT_GROUP},dns-failed`,
     ];
     sections.push(`[Rule]\n${ruleLines.filter(Boolean).join('\n')}`);
 

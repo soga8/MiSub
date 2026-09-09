@@ -5,6 +5,7 @@
 
 import * as NodeUtils from './node-transformer.js';
 import { extractNodeRegion, getRegionEmoji } from '../modules/utils/geo-utils.js';
+import { matchesDslCondition, renderDslTemplate } from './expression-dsl.js';
 
 /**
  * 辅助函数：将规则模式规范化为正则表达式数组
@@ -12,15 +13,16 @@ import { extractNodeRegion, getRegionEmoji } from '../modules/utils/geo-utils.js
 function normalizeRules(rules) {
     if (!rules) return [];
     if (!Array.isArray(rules)) {
-        if (typeof rules === 'string') return rules.split(/\r?\n/).filter(line => line.trim() !== '');
+        if (typeof rules === 'string')
+            return rules.split(/\r?\n/).filter((line) => line.trim() !== '');
         return [];
     }
-    
+
     let normalized = [];
     for (const rule of rules) {
         if (typeof rule === 'string') {
             // 支持在单个算子输入中通过 | 或 换行符 传递多个子规则
-            const parts = rule.split(/\r?\n/).filter(p => p.trim() !== '');
+            const parts = rule.split(/\r?\n/).filter((p) => p.trim() !== '');
             normalized.push(...parts);
         } else if (rule && rule.pattern) {
             normalized.push(rule);
@@ -40,14 +42,17 @@ function opFilter(nodes, params) {
     if (include?.enabled) {
         const rules = normalizeRules(include.rules);
         if (rules.length > 0) {
-            result = result.filter(r => {
+            result = result.filter((r) => {
                 const enriched = NodeUtils.ensureRegionInfo(r, true); // 强制获取元数据
                 const matchRaw = NodeUtils.matchesRegexRules(r.name, rules);
-                const matchClean = r.metadata?.cleanName ? NodeUtils.matchesRegexRules(r.metadata.cleanName, rules) : false;
-                const matchRegion = NodeUtils.matchesRegexRules(enriched.regionZh, rules) || 
-                                    NodeUtils.matchesRegexRules(enriched.region, rules) ||
-                                    NodeUtils.matchesRegexRules(enriched.regionCode, rules); // [新增] ISO 代码匹配
-                
+                const matchClean = r.metadata?.cleanName
+                    ? NodeUtils.matchesRegexRules(r.metadata.cleanName, rules)
+                    : false;
+                const matchRegion =
+                    NodeUtils.matchesRegexRules(enriched.regionZh, rules) ||
+                    NodeUtils.matchesRegexRules(enriched.region, rules) ||
+                    NodeUtils.matchesRegexRules(enriched.regionCode, rules); // [新增] ISO 代码匹配
+
                 return matchRaw || matchClean || matchRegion;
             });
         }
@@ -55,27 +60,30 @@ function opFilter(nodes, params) {
     if (exclude?.enabled) {
         const rules = normalizeRules(exclude.rules);
         if (rules.length > 0) {
-            result = result.filter(r => {
+            result = result.filter((r) => {
                 const enriched = NodeUtils.ensureRegionInfo(r, true); // 强制获取元数据
                 const matchRaw = NodeUtils.matchesRegexRules(r.name, rules);
-                const matchClean = r.metadata?.cleanName ? NodeUtils.matchesRegexRules(r.metadata.cleanName, rules) : false;
-                const matchRegion = NodeUtils.matchesRegexRules(enriched.regionZh, rules) || 
-                                    NodeUtils.matchesRegexRules(enriched.region, rules) ||
-                                    NodeUtils.matchesRegexRules(enriched.regionCode, rules); // [新增] ISO 代码匹配
-                                    
+                const matchClean = r.metadata?.cleanName
+                    ? NodeUtils.matchesRegexRules(r.metadata.cleanName, rules)
+                    : false;
+                const matchRegion =
+                    NodeUtils.matchesRegexRules(enriched.regionZh, rules) ||
+                    NodeUtils.matchesRegexRules(enriched.region, rules) ||
+                    NodeUtils.matchesRegexRules(enriched.regionCode, rules); // [新增] ISO 代码匹配
+
                 return !(matchRaw || matchClean || matchRegion);
             });
         }
     }
     if (protocols?.enabled && Array.isArray(protocols.values)) {
-        const allowed = new Set(protocols.values.map(p => p.toLowerCase()));
-        result = result.filter(r => allowed.has(r.protocol.toLowerCase()));
+        const allowed = new Set(protocols.values.map((p) => p.toLowerCase()));
+        result = result.filter((r) => allowed.has(r.protocol.toLowerCase()));
     }
     if (regions?.enabled && Array.isArray(regions.values)) {
         // Ensure region info is present
-        result = result.map(r => NodeUtils.ensureRegionInfo(r, true));
+        result = result.map((r) => NodeUtils.ensureRegionInfo(r, true));
         const allowed = new Set(regions.values);
-        result = result.filter(r => allowed.has(r.regionZh) || allowed.has(r.region));
+        result = result.filter((r) => allowed.has(r.regionZh) || allowed.has(r.region));
     }
     return result;
 }
@@ -91,7 +99,7 @@ function opRename(nodes, params) {
     if (regex?.enabled) {
         const rules = normalizeRules(regex.rules);
         if (rules.length > 0) {
-            result = result.map(r => {
+            result = result.map((r) => {
                 const enriched = NodeUtils.ensureRegionInfo(r, true);
                 const vars = {
                     name: r.name,
@@ -100,23 +108,30 @@ function opRename(nodes, params) {
                     regionZh: enriched.regionZh,
                     emoji: enriched.emoji,
                     server: r.server,
-                    port: r.port
+                    port: r.port,
                 };
 
                 // 核心增强：允许在正则替换中使用 {regionZh} 等变量
-                const processedRules = rules.map(rule => {
-                    if (typeof rule === 'object' && rule.replacement && rule.replacement.includes('{')) {
-                        return { ...rule, replacement: NodeUtils.renderTemplate(rule.replacement, vars, r) };
+                const processedRules = rules.map((rule) => {
+                    if (
+                        typeof rule === 'object' &&
+                        rule.replacement &&
+                        rule.replacement.includes('{')
+                    ) {
+                        return {
+                            ...rule,
+                            replacement: NodeUtils.renderTemplate(rule.replacement, vars, r),
+                        };
                     }
                     return rule;
                 });
 
-                const newName = NodeUtils.applyRegexRename(r.name, processedRules);
+                const newName = NodeUtils.applyRegexRename(r.name, processedRules, r);
                 if (newName !== r.name) {
                     return {
                         ...r,
                         name: newName,
-                        url: NodeUtils.setNodeName(r.url, r.protocol, newName)
+                        url: NodeUtils.setNodeName(r.url, r.protocol, newName),
                     };
                 }
                 return r;
@@ -130,13 +145,14 @@ function opRename(nodes, params) {
 
         result = result.map((r, index) => {
             const enriched = NodeUtils.ensureRegionInfo(r, true);
-            
+
             // 确定索引分组键
             let groupKey = 'global';
             if (scope === 'region') groupKey = `r:${enriched.regionZh || 'Other'}`;
             else if (scope === 'protocol') groupKey = `p:${r.protocol}`;
-            else if (scope === 'regionProtocol') groupKey = `rp:${enriched.regionZh || 'Other'}|${r.protocol}`;
-            
+            else if (scope === 'regionProtocol')
+                groupKey = `rp:${enriched.regionZh || 'Other'}|${r.protocol}`;
+
             const groupIndex = (counters.get(groupKey) || 0) + 1;
             counters.set(groupKey, groupIndex);
 
@@ -149,15 +165,15 @@ function opRename(nodes, params) {
                 server: r.server,
                 port: r.port,
                 index: groupIndex + (Number(template.offset || template.indexStart) || 1) - 1,
-                globalIndex: index + (Number(template.offset || template.indexStart) || 1)
+                globalIndex: index + (Number(template.offset || template.indexStart) || 1),
             };
             const newName = NodeUtils.renderTemplate(template.template, vars, r);
-            
+
             if (newName !== r.name) {
                 return {
                     ...r,
                     name: newName,
-                    url: NodeUtils.setNodeName(r.url, r.protocol, newName)
+                    url: NodeUtils.setNodeName(r.url, r.protocol, newName),
                 };
             }
             return r;
@@ -170,114 +186,50 @@ function opRename(nodes, params) {
 /**
  * Script Operator (The heart of Sub-Store)
  */
-async function opScript(nodes, params, context) {
-    const { code, url } = params;
-    let scriptCode = code;
+async function opScript(nodes, params = {}, context) {
+    const dsl = Array.isArray(params.dsl) ? params.dsl : params.action ? [params] : [];
 
-    if (url) {
-        try {
-             // In Cloudflare Workers, we use fetch
-            const response = await fetch(url);
-            if (response.ok) {
-                scriptCode = await response.text();
-            } else {
-                console.warn(`[Operator] Failed to fetch remote script from ${url}: ${response.status}`);
-            }
-        } catch (e) {
-            console.error('[Operator] Script fetch error:', e);
+    if (!dsl.length) {
+        if (params.code || params.url) {
+            console.warn('[Operator] Legacy script code is disabled; use params.dsl instead.');
         }
+        return nodes;
     }
 
-    if (!scriptCode) return nodes;
+    let result = nodes.map((r) => NodeUtils.ensureRegionInfo(r, true));
 
-    try {
-        // [审计增强] 脚本执行前自动补全地理元数据
-        const enrichedNodes = nodes.map(r => NodeUtils.ensureRegionInfo(r, true));
-        
-        const scriptEnv = {
-            $proxies: enrichedNodes,
-            $context: context,
-            $utils: {
-                decodeBase64: s => atob(s),
-                encodeBase64: s => btoa(s),
-                decodeURI: s => decodeURI(s),
-                encodeURI: s => encodeURI(s),
-                decodeURIComponent: s => decodeURIComponent(s),
-                encodeURIComponent: s => encodeURIComponent(s),
-                jsonStringify: o => JSON.stringify(o),
-                jsonParse: s => JSON.parse(s),
-                getHost: url => { try { return new URL(url).hostname; } catch(e) { return ''; } }
-            }
-        };
-
-        // 智能包装与容错
-        let finalScript = scriptCode.trim();
-        if (!finalScript.includes('function operator') && !finalScript.includes('const operator')) {
-            finalScript = `async function operator($proxies, $context) { \n ${finalScript} \n }`;
-        } else {
-            const openBraces = (finalScript.match(/\{/g) || []).length;
-            const closeBraces = (finalScript.match(/\}/g) || []).length;
-            if (openBraces > closeBraces) {
-                finalScript += '\n'.repeat(openBraces - closeBraces) + '}'.repeat(openBraces - closeBraces);
-            }
+    for (const step of dsl) {
+        const action = String(step?.action || '').toLowerCase();
+        if (action === 'filter') {
+            result = result.filter((node, index) =>
+                matchesDslCondition({ ...node, index: index + 1 }, step)
+            );
+            continue;
         }
-
-        // 尝试使用更兼容的 Function 构造器，并减少包装复杂度
-        let runner;
-        try {
-            runner = new Function('$proxies', '$context', '$utils', `
-                const operator = async ($proxies, $context) => {
-                    ${finalScript}
-                    if (typeof operator === 'function') return await operator($proxies, $context);
-                    return $proxies;
+        if (action === 'rename') {
+            const template = step.template || step.expression;
+            if (!template) continue;
+            result = result.map((node, index) => {
+                const nextName =
+                    renderDslTemplate(template, {
+                        ...node,
+                        index: index + 1,
+                        target: context?.target || '',
+                    }) || node.name;
+                if (nextName === node.name) return node;
+                return {
+                    ...node,
+                    name: nextName,
+                    url: NodeUtils.setNodeName(node.url, node.protocol, nextName),
+                    metadata: node.metadata
+                        ? { ...node.metadata, cleanName: nextName }
+                        : node.metadata,
                 };
-                return operator($proxies, $context);
-            `);
-        } catch (e) {
-            // 如果 Function 被彻底封死，我们尝试最后的 eval 降级
-            console.warn('[Operator] Function constructor blocked, trying eval fallback');
-            runner = ($proxies, $context, $utils) => {
-                return (async () => {
-                    // 这里是一个非常激进的尝试
-                    const fn = eval(`(async ($proxies, $context) => { ${finalScript}; return await operator($proxies, $context); })`);
-                    return await fn($proxies, $context);
-                })();
-            };
-        }
-
-        const processedNodes = enrichedNodes.map(n => {
-            if (n.name) n.name = n.name.replace(/[·•・∙]/g, '·');
-            n.regionzh = n.regionZh;
-            n.region_zh = n.regionZh;
-            return n;
-        });
-
-        // 执行脚本
-        const result = await runner(processedNodes, context, scriptEnv.$utils);
-        
-        // 核心修复：彻底信任脚本返回的结果，并强制同步到 URL
-        if (Array.isArray(result) && result.length > 0) {
-            return result.map((n) => {
-                // 脚本可能返回 Proxy 对象，我们需要提取原始数据
-                const target = n.__target || n;
-                const newName = n.name || target.name;
-                
-                if (newName) {
-                    target.name = newName;
-                    // 只要名字和初始状态不一致，就强制同步 URL
-                    if (target.name !== target.originalName) {
-                        target.url = NodeUtils.setNodeName(target.url, target.protocol, target.name);
-                        if (target.metadata) target.metadata.cleanName = target.name;
-                    }
-                }
-                return target;
             });
         }
-        return nodes;
-    } catch (e) {
-        console.error('[Operator] Script execution failed:', e);
-        return nodes;
     }
+
+    return result;
 }
 
 /**
@@ -289,10 +241,20 @@ export async function runOperatorChain(nodeUrls, operators, context = {}) {
     }
 
     // 1. Convert URLs to Records
-    let records = NodeUtils.nodeUrlsToRecords(nodeUrls, { 
-        needServerPort: true, 
-        ensureRegion: false 
+    let records = NodeUtils.nodeUrlsToRecords(nodeUrls, {
+        needServerPort: true,
+        ensureRegion: false,
     });
+    const metadataByUrl =
+        context.nodeMetadataByUrl instanceof Map
+            ? context.nodeMetadataByUrl
+            : new Map(Object.entries(context.nodeMetadataByUrl || {}));
+    if (metadataByUrl.size > 0) {
+        records = records.map((record) => ({
+            ...record,
+            ...(metadataByUrl.get(record.url) || {}),
+        }));
+    }
 
     const ua = (context.userAgent || '').toLowerCase();
     const platform = {
@@ -303,7 +265,7 @@ export async function runOperatorChain(nodeUrls, operators, context = {}) {
         isShadowrocket: /shadowrocket/i.test(ua),
         isSingBox: /sing-box|singbox/i.test(ua),
         userAgent: context.userAgent,
-        target: context.target || 'base64'
+        target: context.target || 'base64',
     };
 
     const enrichedContext = { ...context, ...platform };
@@ -325,9 +287,11 @@ export async function runOperatorChain(nodeUrls, operators, context = {}) {
                 break;
             case 'sort':
                 if (params && Array.isArray(params.keys)) {
-                    const needsRegion = params.keys.some(k => k.key === 'region' || k.key === 'regionZh');
+                    const needsRegion = params.keys.some(
+                        (k) => k.key === 'region' || k.key === 'regionZh'
+                    );
                     if (needsRegion) {
-                        records = records.map(r => NodeUtils.ensureRegionInfo(r, true));
+                        records = records.map((r) => NodeUtils.ensureRegionInfo(r, true));
                     }
                     records.sort(NodeUtils.makeComparator({ keys: params.keys }));
                 }

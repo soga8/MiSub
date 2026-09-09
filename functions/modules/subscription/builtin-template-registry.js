@@ -4,7 +4,8 @@ export const BUILTIN_TEMPLATE_REGISTRY = {
         name: 'MiSub 极简默认分流',
         target: 'clash',
         format: 'ini',
-        description: '更偏日常使用的极简模板，仅保留主选择、自动选择、常用媒体与兜底分组，适合作为统一模板主线默认配置。',
+        description:
+            '更偏日常使用的极简模板，仅保留主选择、自动选择、常用媒体与兜底分组，适合作为统一模板主线默认配置。',
         content: `[custom]
 ruleset=🎬 流媒体,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/ProxyMedia.list
 ruleset=📲 电报消息,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Telegram.list
@@ -12,17 +13,17 @@ ruleset=🎯 全球直连,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/mast
 ruleset=🎯 全球直连,[]GEOIP,CN
 ruleset=🐟 漏网之鱼,[]FINAL
 
-custom_proxy_group=🚀 节点选择\`select\`[]♻️ 自动选择\`[]🔯 故障转移\`[]<%regionStrategyChain%>\`[]☑ * 手动切换\`[]DIRECT
+custom_proxy_group=🚀 节点选择\`select\`[]♻️ 自动选择\`[]🔯 故障转移\`[]<%regionStrategyChain%>\`[]☑️ 手动切换\`[]DIRECT
 custom_proxy_group=♻️ 自动选择\`url-test\`.*\`http://www.gstatic.com/generate_204\`300,,50
 custom_proxy_group=🔯 故障转移\`fallback\`.*\`http://www.gstatic.com/generate_204\`300,,50
-custom_proxy_group=☑ * 手动切换\`select\`.*
+custom_proxy_group=☑️ 手动切换\`select\`.*
 custom_proxy_group=🎬 流媒体\`select\`[]🚀 节点选择\`[]♻️ 自动选择\`[]DIRECT
 custom_proxy_group=📲 电报消息\`select\`[]🚀 节点选择\`[]♻️ 自动选择\`[]DIRECT
 custom_proxy_group=🎯 全球直连\`select\`[]DIRECT\`[]🚀 节点选择
 custom_proxy_group=🐟 漏网之鱼\`select\`[]🚀 节点选择\`[]♻️ 自动选择\`[]DIRECT
 
 enable_rule_generator=true
-overwrite_original_rules=true`
+overwrite_original_rules=true`,
     },
     clash_acl4ssr_lite: {
         id: 'clash_acl4ssr_lite',
@@ -41,9 +42,9 @@ ruleset=🎯 全球直连,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/mast
 ruleset=🎯 全球直连,[]GEOIP,CN
 ruleset=🐟 漏网之鱼,[]FINAL
 
-custom_proxy_group=🚀 节点选择\`select\`[]♻️ 自动选择\`[]🇭🇰 香港节点\`[]🇯🇵 日本节点\`[]🇺🇲 美国节点\`[]☑️ 手动切换\`[]DIRECT
+custom_proxy_group=🚀 节点选择\`select\`[]♻️ 自动选择\`[]<%regionStrategyChain%>\`[]☑️ 手动切换\`[]DIRECT
 custom_proxy_group=☑️ 手动切换\`select\`.*
-custom_proxy_group=♻️ 自动选择\`url-test\`[]🇭🇰 香港节点\`[]🇯🇵 日本节点\`[]🇺🇲 美国节点\`http://www.gstatic.com/generate_204\`300,,50
+custom_proxy_group=♻️ 自动选择\`url-test\`[]<%regionStrategyChain%>\`http://www.gstatic.com/generate_204\`300,,50
 custom_proxy_group=📲 电报消息\`select\`[]🚀 节点选择\`[]♻️ 自动选择\`[]DIRECT
 custom_proxy_group=📹 油管视频\`select\`[]🚀 节点选择\`[]♻️ 自动选择\`[]DIRECT
 custom_proxy_group=🎥 奈飞视频\`select\`[]🚀 节点选择\`[]♻️ 自动选择\`[]DIRECT
@@ -52,10 +53,10 @@ custom_proxy_group=🛑 广告拦截\`select\`[]REJECT\`[]DIRECT
 custom_proxy_group=🐟 漏网之鱼\`select\`[]🚀 节点选择\`[]♻️ 自动选择\`[]DIRECT
 custom_proxy_group=🇭🇰 香港节点\`url-test\`(港|HK|Hong Kong|HKG)\`http://www.gstatic.com/generate_204\`300,,50
 custom_proxy_group=🇯🇵 日本节点\`url-test\`(日本|JP|Japan|Tokyo|NRT|KIX)\`http://www.gstatic.com/generate_204\`300,,50
-custom_proxy_group=🇺🇲 美国节点\`url-test\`(美|US|United States|LAX|SJC|SEA)\`http://www.gstatic.com/generate_204\`300,,100
+custom_proxy_group=🇺🇸 美国节点\`url-test\`(美|US|United States|LAX|SJC|SEA)\`http://www.gstatic.com/generate_204\`300,,100
 
 enable_rule_generator=true
-overwrite_original_rules=true`
+overwrite_original_rules=true`,
     },
     clash_misub_media_ai: {
         id: 'clash_misub_media_ai',
@@ -65,7 +66,24 @@ overwrite_original_rules=true`
         description: '面向常见流媒体和 AI 服务场景的内置模板，保留自动选择、地区组和核心服务分流。',
         content: `[custom]
 ruleset=🤖 AI 服务,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/OpenAi.list
-ruleset=🤖 AI 服务,https://raw.githubusercontent.com/cmliu/ACL4SSR/main/Clash/Claude.list
+ruleset=🤖 AI 服务,https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/538b8a79532c44dfbcb8e694d2f43e753c60b157/rule/Clash/Claude/Claude.list
+ruleset=🤖 AI 服务,[]DOMAIN-SUFFIX,x.ai
+ruleset=🤖 AI 服务,[]DOMAIN-SUFFIX,xai.com
+ruleset=🤖 AI 服务,[]DOMAIN-SUFFIX,grok.com
+ruleset=🤖 AI 服务,[]DOMAIN-SUFFIX,gemini.google.com
+ruleset=🤖 AI 服务,[]DOMAIN-SUFFIX,aistudio.google.com
+ruleset=🤖 AI 服务,[]DOMAIN-SUFFIX,copilot.microsoft.com
+ruleset=🤖 AI 服务,[]DOMAIN-SUFFIX,api.githubcopilot.com
+ruleset=🤖 AI 服务,[]DOMAIN-SUFFIX,perplexity.ai
+ruleset=🤖 AI 服务,[]DOMAIN-SUFFIX,poe.com
+ruleset=🤖 AI 服务,[]DOMAIN-SUFFIX,character.ai
+ruleset=🤖 AI 服务,[]DOMAIN-SUFFIX,deepseek.com
+ruleset=🤖 AI 服务,[]DOMAIN-SUFFIX,moonshot.cn
+ruleset=🤖 AI 服务,[]DOMAIN-SUFFIX,yuanbao.tencent.com
+ruleset=🤖 AI 服务,[]DOMAIN-SUFFIX,tongyi.aliyun.com
+ruleset=🤖 AI 服务,[]DOMAIN-SUFFIX,qianwen.com
+ruleset=🤖 AI 服务,[]DOMAIN-SUFFIX,doubao.com
+ruleset=🤖 AI 服务,[]DOMAIN-SUFFIX,coze.cn
 ruleset=📹 油管视频,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/YouTube.list
 ruleset=🎥 奈飞视频,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/Netflix.list
 ruleset=📲 电报消息,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Telegram.list
@@ -73,10 +91,10 @@ ruleset=🎯 全球直连,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/mast
 ruleset=🎯 全球直连,[]GEOIP,CN
 ruleset=🐟 漏网之鱼,[]FINAL
 
-custom_proxy_group=🚀 节点选择\`select\`[]♻️ 自动选择\`[]<%regionStrategyChain%>\`[]<%protocolStrategyChain%>\`[]☑️ 手动切换\`[]DIRECT
+custom_proxy_group=🚀 节点选择\`select\`[]♻️ 自动选择\`[]<%regionStrategyChain%>\`[]☑️ 手动切换\`[]DIRECT
 custom_proxy_group=♻️ 自动选择\`url-test\`[]<%regionStrategyChain%>\`http://www.gstatic.com/generate_204\`300,,50
 custom_proxy_group=☑️ 手动切换\`select\`.*
-custom_proxy_group=🤖 AI 服务\`select\`[]🚀 节点选择\`[]♻️ 自动选择\`[]🇺🇲 美国节点\`[]🇯🇵 日本节点\`[]DIRECT
+custom_proxy_group=🤖 AI 服务\`select\`[]🚀 节点选择\`[]♻️ 自动选择\`[]🇺🇸 美国节点\`[]🇯🇵 日本节点
 custom_proxy_group=📹 油管视频\`select\`[]🚀 节点选择\`[]♻️ 自动选择\`[]DIRECT
 custom_proxy_group=🎥 奈飞视频\`select\`[]🚀 节点选择\`[]♻️ 自动选择\`[]DIRECT
 custom_proxy_group=📲 电报消息\`select\`[]🚀 节点选择\`[]♻️ 自动选择\`[]DIRECT
@@ -84,7 +102,7 @@ custom_proxy_group=🎯 全球直连\`select\`[]DIRECT\`[]🚀 节点选择
 custom_proxy_group=🐟 漏网之鱼\`select\`[]🚀 节点选择\`[]♻️ 自动选择\`[]DIRECT
 
 enable_rule_generator=true
-overwrite_original_rules=true`
+overwrite_original_rules=true`,
     },
     clash_acl4ssr_full: {
         id: 'clash_acl4ssr_full',
@@ -96,7 +114,7 @@ overwrite_original_rules=true`
 ruleset=🎯 全球直连,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/LocalAreaNetwork.list
 ruleset=🛑 广告拦截,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/BanAD.list
 ruleset=📲 电报消息,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Telegram.list
-ruleset=🤖 OpenAi,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/OpenAi.list
+ruleset=🤖 AI 服务,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/OpenAi.list
 ruleset=📹 油管视频,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/YouTube.list
 ruleset=🎥 奈飞视频,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/Netflix.list
 ruleset=🎮 游戏平台,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/Steam.list
@@ -108,7 +126,7 @@ custom_proxy_group=🚀 节点选择\`select\`[]♻️ 自动选择\`[]🔯 故�
 custom_proxy_group=☑️ 手动切换\`select\`.*
 custom_proxy_group=♻️ 自动选择\`url-test\`.*\`http://www.gstatic.com/generate_204\`300,,50
 custom_proxy_group=🔯 故障转移\`fallback\`.*\`http://www.gstatic.com/generate_204\`300,,50
-custom_proxy_group=🤖 OpenAi\`select\`[]🚀 节点选择\`[]🔯 故障转移\`[]🇺🇲 美国节点\`[]🇸🇬 狮城节点
+custom_proxy_group=🤖 AI 服务\`select\`[]🚀 节点选择\`[]🔯 故障转移\`[]🇺🇸 美国节点\`[]🌍 狮城节点
 custom_proxy_group=📲 电报消息\`select\`[]🚀 节点选择\`[]🇸🇬 狮城节点\`[]🇭🇰 香港节点
 custom_proxy_group=📹 油管视频\`select\`[]🚀 节点选择\`[]♻️ 自动选择
 custom_proxy_group=🎥 奈飞视频\`select\`[]🚀 节点选择\`[]♻️ 自动选择
@@ -118,17 +136,18 @@ custom_proxy_group=🛑 广告拦截\`select\`[]REJECT\`[]DIRECT
 custom_proxy_group=🐟 漏网之鱼\`select\`[]🚀 节点选择\`[]DIRECT
 
 enable_rule_generator=true
-overwrite_original_rules=true`
+overwrite_original_rules=true`,
     },
     clash_exclusive_ai: {
         id: 'clash_exclusive_ai',
         name: 'MiSub 深度 AI 开发者模板',
         target: 'clash',
         format: 'ini',
-        description: '专为 AI 开发者优化，强化 OpenAI/Claude 路由，增加固定节点漂移保护与纯净度检测引导。',
+        description:
+            '专为 AI 开发者优化，强化 OpenAI/Claude 路由，增加固定节点漂移保护与纯净度检测引导。',
         content: `[custom]
 ruleset=🤖 AI 核心服务,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/OpenAi.list
-ruleset=🤖 AI 核心服务,https://raw.githubusercontent.com/cmliu/ACL4SSR/main/Clash/Claude.list
+ruleset=🤖 AI 核心服务,https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/538b8a79532c44dfbcb8e694d2f43e753c60b157/rule/Clash/Claude/Claude.list
 ruleset=🌍 国外媒体,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/ProxyMedia.list
 ruleset=🎯 全球直连,[]GEOIP,CN
 ruleset=🐟 漏网之鱼,[]FINAL
@@ -141,7 +160,7 @@ custom_proxy_group=🤖 AI 核心服务\`select\`[]🔯 故障转移\`[]🇺🇲
 custom_proxy_group=🌍 国外媒体\`select\`[]🚀 节点选择\`[]♻️ 自动选择\`[]DIRECT
 
 enable_rule_generator=true
-overwrite_original_rules=true`
+overwrite_original_rules=true`,
     },
     clash_game_optimized: {
         id: 'clash_game_optimized',
@@ -163,8 +182,8 @@ custom_proxy_group=♻️ 自动选择\`url-test\`.*\`http://www.gstatic.com/gen
 custom_proxy_group=☑️ 手动切换\`select\`.*
 
 enable_rule_generator=true
-overwrite_original_rules=true`
-    }
+overwrite_original_rules=true`,
+    },
 };
 
 export function getBuiltinTemplate(templateId) {
